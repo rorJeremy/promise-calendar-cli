@@ -6,6 +6,11 @@ Server contract: `promise-church-calendar` →
 event JSON shape, nested request bodies, error shapes, and the golden JSON in
 `test/fixtures/files/api/`.
 
+**Amended 2026-09-28 after reviewing basecamp-cli's auth** (design doc updated
+to match): tokens never go in argv (no `--token` flag;
+`auth login --with-token` reads stdin); `logout` revokes tokens that `pcal
+login` minted; `login` has a paste-the-callback fallback on headless hosts.
+
 TDD throughout (`go test`, table-driven, `testify/require`). Commit once per
 phase, and run `make check` at the end of each phase.
 
@@ -34,7 +39,8 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
   basecamp-cli `.goreleaser.yaml` → `internal/version.Version`), plus
   `UserAgent()` → `pcal/<version> (<GOOS>/<GOARCH>)`.
 - `internal/commands/root.go`: cobra root with the persistent flags `--json`,
-  `--quiet`, `--jq EXPR`, `--url`, `--token`, `--yes`. `SilenceUsage`/`SilenceErrors`
+  `--quiet`, `--jq EXPR`, `--url`, `--yes`. There is deliberately no `--token`,
+  so tokens never land in shell history or `ps`. `SilenceUsage`/`SilenceErrors`
   are on; errors go through `output` (Phase 2).
 - `Makefile` (modelled on fizzy-cli's `check` default goal): `build`, `test`
   (`go test -race ./...`), `vet`, `lint` (golangci-lint), `fmt-check`,
@@ -73,8 +79,9 @@ Commit: "Add output envelope, renderers, and exit codes".
 ## Phase 3 — `internal/config` + credential storage
 
 **Red first:**
-- Precedence: flag > env (`PCAL_URL`, `PCAL_TOKEN`) > config/keyring > default
-  `https://calendar.promisechurch.io`. Table test covering all 4 layers.
+- Precedence: URL: `--url` > `PCAL_URL` > config > default
+  `https://calendar.promisechurch.io`. Token: `PCAL_TOKEN` > keyring/file.
+  Table test covering every layer.
 - Config path: `$XDG_CONFIG_HOME/pcal/config.json`, else
   `~/.config/pcal/config.json` (the design says `~/.config` on macOS too, so
   don't use `os.UserConfigDir`). It stores `url` and a cached `time_zone`.
@@ -83,6 +90,9 @@ Commit: "Add output envelope, renderers, and exit codes".
   tests use `keyring.MockInit()`. When the keyring errors or
   `PCAL_NO_KEYRING=1` is set → `credentials.json` (`0600`) plus a one-time
   stderr warning. `Delete` removes both.
+- The stored credential records `source`: `browser` (minted by `pcal login`)
+  or `imported` (`--with-token`). `PCAL_TOKEN` is reported as source `env` and
+  is never stored. Logout (Phase 6) depends on this.
 
 Commit: "Add config and credential storage".
 
@@ -114,16 +124,28 @@ Commit: "Add HTTP client".
 
 Commit: "Pin API contract with golden JSON".
 
-## Phase 6 — `pcal auth login --token`, `auth status`, `whoami`, `logout`
+## Phase 6 — `pcal auth login --with-token`, `auth status`, `whoami`, `logout`
 
 **Red** (commands tested through `cobra` with a fake server; output captured):
-- `auth login --token T`: `GET /my/identity` → store and print "Logged in as
-  Admin (write)". 401 → exit 3, nothing stored.
+- `auth login --with-token`: reads the token from **stdin** (as in
+  basecamp-cli `auth login --with-token`). When stdin is a TTY, use a masked huh
+  input; when it's piped, read everything and trim it. Empty → exit 1. Verify
+  with `GET /my/identity` **before** storing (source `imported`), then print
+  "Logged in as Admin (write)". 401 → exit 3, nothing stored. A positional
+  token argument → exit 1 with the hint `echo … | pcal auth login --with-token`.
 - `auth status`: URL, user, permission, and credential source (keyring / file /
   env). Not logged in → exit 3.
 - `whoami`: identity JSON/card; caches `time_zone` in config.
-- `logout`: deletes the local credential only (design; fizzy-cli does the same)
-  and prints a hint to revoke at `/my/access_tokens` or with `pcal tokens revoke`.
+- `logout` (basecamp-cli `revoke.go#LogoutCredential` semantics):
+  - source `browser` → `DELETE /my/current_access_token`. 204 or 401 (already
+    gone) → "Logged out; token revoked". Network error or 5xx → still forget
+    locally, and warn "couldn't revoke; it may still be live — revoke at
+    /my/access_tokens". Exit 0 either way, since the local credential is gone.
+  - source `imported` → forget locally only, with the hint "this token is still
+    valid; revoke it at /my/access_tokens or with `pcal tokens revoke ID`".
+  - `PCAL_TOKEN` set → exit 1 "logged in via PCAL_TOKEN; unset it".
+  - nothing stored → exit 0, "Not logged in".
+  - Red tests cover each branch (the fake server records the DELETE).
 
 Commit: "Add token login, status, whoami, logout".
 
@@ -142,11 +164,30 @@ Commit: "Add token login, status, whoami, logout".
 - `POST /cli/token {code, code_verifier}` → store → `/my/identity` → "Logged in
   as <name> (<permission>)".
 - `--read-only` → `permission=read`. `--url` overrides the base.
+- The stored credential has source `browser`.
+- **Headless / paste fallback** (basecamp-cli `LoginOptions.defaults`,
+  `hostutil.HeadlessReason`, `readCallbackInput`): `internal/auth/host.go`
+  `HeadlessReason()` → `"SSH session"` (`SSH_CONNECTION`/`SSH_CLIENT`/`SSH_TTY`),
+  `"CI environment"` (`CI` truthy), `"no display"` (Unix without
+  `DISPLAY`/`WAYLAND_DISPLAY`), or `""`.
+  - Remote mode (auto when headless, or `--remote`; `--local` wins over the
+    detection; `--remote` + `--local` → exit 1): don't open a browser. Print
+    "Not opening a browser here (SSH session). Open this link on any device:"
+    plus the URL, then prompt "Paste the address your browser ended up on:".
+    Parse `code`/`state` (or `error`) from the pasted URL, require a matching
+    state, and exchange as usual. The prompt waits up to 5 minutes, matching the
+    server's code lifetime.
+  - `--no-browser`: keep the local listener but don't launch a browser; just
+    print the link.
+  - A failed browser launch isn't a failed login: say "Couldn't open a browser.
+    Open the link above." and keep waiting.
 
 **Red** (drive the listener directly; the Rails side is an `httptest.Server`):
 success; state mismatch; access_denied; timeout (injected short duration);
 `/cli/token` 400 → exit 3; a second callback ignored. The browser opener is an
-injectable func.
+injectable func. Paste mode: the URL is parsed (success, `error=access_denied`,
+wrong state, garbage input → re-prompt once, then exit 1). `HeadlessReason`
+table test with an injected env and GOOS. `--local` overrides the detection.
 
 Commit: "Add browser login".
 
@@ -293,8 +334,9 @@ homebrew_casks:
 
 Live smoke test against production (after PR 2 deploys): `pcal login` →
 `whoami` → `events list` → create a draft test event → update → image set/rm →
-delete → `pcal login --read-only` and a write attempt → exit 4. Then tag
-`v0.1.0`.
+delete → `pcal login --read-only` and a write attempt → exit 4 → `pcal logout`
+(the token disappears from `/my/access_tokens`) → an SSH-session login via
+paste. Then tag `v0.1.0`.
 
 Commit: "Add release pipeline".
 

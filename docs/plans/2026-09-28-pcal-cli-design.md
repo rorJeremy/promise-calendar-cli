@@ -21,7 +21,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Language | Go. Workload is network-bound; Go gives fast iteration, stdlib HTTP, cobra, goreleaser, and a reference codebase |
 | Libraries | `spf13/cobra`, `charmbracelet/huh`, `charmbracelet/lipgloss`, `zalando/go-keyring`, `itchyny/gojq`, `stretchr/testify` |
 | Shared toolkit | Do **not** depend on `basecamp/cli` (pre-1.0, multi-account machinery we don't need). Copy its conventions |
-| Login | `pcal login` browser flow (PKCE + localhost callback); `pcal auth login --token` for CI/agents |
+| Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
 | Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
 | Output | Tables in a TTY; fizzy-style JSON envelope when piped or `--json` |
 | Distribution | goreleaser → GitHub Releases + `rorJeremy/homebrew-tap`; `go install` works |
@@ -52,9 +52,9 @@ Makefile
 ## Commands
 
 ```
-pcal login [--read-only] [--url URL]
-pcal logout                                   # deletes local credential only
-pcal auth login --token T  |  auth status
+pcal login [--read-only] [--url URL] [--remote | --local] [--no-browser]
+pcal logout                                   # revokes a login-minted token, then forgets it locally
+pcal auth login --with-token  |  auth status  # token read from stdin, never an argument
 pcal whoami
 
 pcal events list [--from D --to D --tag NAME... --search Q --unpublished --website]
@@ -106,12 +106,29 @@ pcal version | completion {bash,zsh,fish} | skill install
 4. `POST /cli/token {code, code_verifier}` → token. Store it, call
    `/my/identity`, print "Logged in as <name> (write)".
 
+**Headless fallback** (as in basecamp-cli, `LoginOptions.defaults` +
+`readCallbackInput`): on an SSH session, with `CI` set, or on Unix without
+`DISPLAY`/`WAYLAND_DISPLAY`, or with `--remote`, don't open a browser. Print
+the link, then ask the person to paste the `http://127.0.0.1:…/callback?…` URL
+their browser was sent to (the page fails to load, but the address bar has
+`code` and `state`). `--local` overrides the detection. The server keeps codes
+for 5 minutes. A pasted code is useless without the PKCE verifier, which never
+leaves this host.
+
+**Logout** (as in basecamp-cli `revoke.go`): a credential that `pcal login`
+minted is revoked with `DELETE /my/current_access_token` (best effort; a
+network failure still forgets locally and says the token may still be live).
+A token imported with `--with-token` is only forgotten locally, because the
+person who created it manages it.
+
 **Storage:** OS keyring (service `pcal`, key = base URL). If no keyring is
 available (headless Linux), fall back to `~/.config/pcal/credentials.json` with
 mode `0600` and warn.
 
-**Precedence:** flags (`--url`, `--token`) > env (`PCAL_URL`, `PCAL_TOKEN`) >
-config/keyring. Default URL `https://calendar.promisechurch.io`.
+**Precedence:** flag (`--url`) > env (`PCAL_URL`, `PCAL_TOKEN`) >
+config/keyring. There is no `--token` flag: tokens never go in argv, where
+they'd land in shell history and the process list. Use `PCAL_TOKEN` or
+`--with-token`. Default URL `https://calendar.promisechurch.io`.
 
 ## Output
 
