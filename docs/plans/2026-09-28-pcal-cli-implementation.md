@@ -21,19 +21,40 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
 
 **Owner: Jeremy.**
 
-- **Go toolchain.** The local `go` is **1.17.2** (`/usr/local/bin/go`, a pkg
-  install). cobra, huh, and current goreleaser need a modern Go. fizzy-cli pins
-  `go 1.26.6`, and Homebrew's stable is 1.27.1. Remove the old pkg install
-  (`sudo rm -rf /usr/local/go /usr/local/bin/go /usr/local/bin/gofmt`), then run
-  `brew install go`. Check with `go version` → ≥ 1.26.
-- `brew install goreleaser golangci-lint`.
+- **Toolchain via mise** (you use mise as of 2026-09-29; the calendar app
+  switched in PR #103). Phase 1 adds `mise.toml` pinning Go, goreleaser, and
+  golangci-lint, so Phase 0 is just: in `~/promise-calendar-cli`, run
+  `mise install`, then `mise exec -- go version` → `go1.27.1`. Nothing comes
+  from Homebrew.
+- **Retire the old Go (recommended).** `/usr/local/bin/go` is **1.17.2**, a pkg
+  install. Inside the repo the mise-activated `go` shadows it, but it's still
+  what non-mise shells and other directories find. Remove it:
+  `sudo rm -rf /usr/local/go /usr/local/bin/go /usr/local/bin/gofmt`, and
+  optionally `mise use -g go@1.27` for a global default.
+- **Non-interactive shells** (agents, scripts) don't run mise's prompt hook.
+  Prefix commands with `mise exec --` (e.g. `mise exec -- make check`). This
+  was verified in the calendar repo, where bare `ruby` resolved to rbenv.
 - PR 2 Phases 7–12 are reviewed (the JSON contract is fixed). The CLI can be
   built against golden JSON before PR 2 deploys. Only the live smoke test
   (Phase 14) needs production.
 
 ## Phase 1 — Scaffold, CI, Makefile
 
-- `go mod init github.com/rorJeremy/promise-calendar-cli`, `go 1.26`.
+- `mise.toml` (the single source of truth for tool versions, locally and in CI):
+  ```toml
+  # Tool versions for pcal development, managed by mise (https://mise.jdx.dev).
+  # CI installs the same versions via jdx/mise-action.
+  [tools]
+  go = "1.27.1"
+  golangci-lint = "2.14.0"
+  goreleaser = "2.18.2"
+  ```
+  These were the latest versions on 2026-09-29 (`mise latest <tool>`). Bump
+  them deliberately. Commit it with `mise.lock` (`mise lock`) so CI resolves
+  the exact same artifacts.
+- `go mod init github.com/rorJeremy/promise-calendar-cli`, `go 1.26`. That is
+  the minimum language version for `go install` users, and it's independent
+  of the 1.27.1 toolchain mise pins for development.
 - `cmd/pcal/main.go` → `os.Exit(commands.Execute())`.
 - `internal/version`: `Version`, `Commit`, `Date` vars (set via ldflags, as in
   basecamp-cli `.goreleaser.yaml` → `internal/version.Version`), plus
@@ -47,8 +68,14 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
   `tidy-check`, `check` (all of them), `golden` (Phase 5).
 - `.golangci.yml`: default linters plus `errcheck`, `gosec`, `revive`.
 - `.github/workflows/test.yml`: matrix `ubuntu-latest`, `macos-latest`;
-  `actions/setup-go` with `go-version-file: go.mod`; `make check`. Env
+  `actions/checkout` → `jdx/mise-action` (installs go, golangci-lint, and
+  goreleaser from `mise.toml`, with caching) → `make check`. Env
   `PCAL_NO_KEYRING=1` (basecamp-cli sets `BASECAMP_NO_KEYRING` in CI).
+  This deviates from basecamp-cli, which uses `actions/setup-go` +
+  `golangci-lint-action` with versions pinned in the workflow. With mise, local
+  and CI versions can't drift. The calendar app kept `ruby/setup-ruby` in CI
+  (PR #103), but a new repo has no such legacy. Pin the action to a commit SHA,
+  as basecamp-cli does.
 - `.gitignore`: `bin/`, `dist/`, `completions/`.
 
 Test: `pcal --help` exits 0, and an unknown command exits 1.
@@ -272,7 +299,8 @@ Commit: "Add RSVP, token, and website-token commands".
 - `skills/pcal/SKILL.md` via `go:embed`. `skill install` writes
   `~/.claude/skills/pcal/SKILL.md` and asks before overwriting unless `--yes`.
   The skill teaches agents to use `--json`, the exit codes, and ID resolution.
-- `README.md`: install, login, 10 common recipes, output modes, exit codes.
+- `README.md`: install (Homebrew, `mise use -g github:rorJeremy/promise-calendar-cli`,
+  `go install`), login, 10 common recipes, output modes, exit codes.
 
 Commit: "Add version, completion, skill, README".
 
@@ -326,11 +354,17 @@ homebrew_casks:
   `brew install rorJeremy/tap/pcal` is unchanged.
 - **Quarantine hook:** we skip code signing (design), so without it Gatekeeper
   blocks the unsigned binary on first run.
-- `.github/workflows/release.yml`: on `v*` tags → `make check` → goreleaser
-  action with `GITHUB_TOKEN` + `HOMEBREW_TAP_TOKEN`. Permissions:
-  `contents: write`.
-- Local checks: `goreleaser check`, `goreleaser release --snapshot --clean`,
-  and run `dist/pcal_darwin_*/pcal version`.
+- `.github/workflows/release.yml`: on `v*` tags → checkout (`fetch-depth: 0`)
+  → `jdx/mise-action` → `make check` → `goreleaser release --clean` (the
+  mise-pinned goreleaser, instead of `goreleaser/goreleaser-action`), with env
+  `GITHUB_TOKEN` + `HOMEBREW_TAP_TOKEN`. Permissions: `contents: write`.
+- Local checks: `mise exec -- goreleaser check`,
+  `mise exec -- goreleaser release --snapshot --clean`, and run
+  `dist/pcal_darwin_*/pcal version`.
+- Test the mise install path against the published release:
+  `mise use -g github:rorJeremy/promise-calendar-cli@0.1.0` → `pcal version`.
+  mise's `github` backend picks the archive for the OS/arch from goreleaser's
+  `pcal_<version>_<os>_<arch>` names.
 
 Live smoke test against production (after PR 2 deploys): `pcal login` →
 `whoami` → `events list` → create a draft test event → update → image set/rm →
@@ -342,7 +376,8 @@ Commit: "Add release pipeline".
 
 ## Manual follow-ups (Jeremy)
 
-1. Phase 0: upgrade Go; install goreleaser and golangci-lint.
+1. Phase 0: `mise install` in the repo (after Phase 1 adds `mise.toml`), and
+   remove the old 1.17.2 pkg Go.
 2. Before tagging v0.1.0:
    - Create the **public** repo `rorJeremy/homebrew-tap`. It must be public for
      `brew install` to work without auth.
@@ -350,8 +385,8 @@ Commit: "Add release pipeline".
      and add it as the `HOMEBREW_TAP_TOKEN` Actions secret on
      `promise-calendar-cli`.
    - Decide on a LICENSE. The repo is private now, and the cask doesn't need one.
-3. **Private repo caveat:** `go install …@latest` and the release tarballs the
-   cask downloads require the repo (or at least its releases) to be public.
+3. **Private repo caveat:** `go install …@latest`, `mise use github:…`, and the
+   release tarballs the cask downloads require the repo (or at least its releases) to be public.
    Either make `promise-calendar-cli` public before v0.1.0, or accept that
    installs need GitHub auth. **Decide before Phase 14.**
 

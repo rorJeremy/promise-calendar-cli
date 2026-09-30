@@ -24,7 +24,8 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
 | Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
 | Output | Tables in a TTY; fizzy-style JSON envelope when piped or `--json` |
-| Distribution | goreleaser → GitHub Releases + `rorJeremy/homebrew-tap`; `go install` works |
+| Distribution | goreleaser → GitHub Releases + `rorJeremy/homebrew-tap`; `go install` and `mise use github:…` work |
+| Dev toolchain | mise (`mise.toml` pins Go, golangci-lint, goreleaser; CI uses `jdx/mise-action`) |
 
 **Out of scope (v1):** profiles/multiple servers, MCP server, TUI, self-update,
 signed releases, curl installer, breadcrumbs in the envelope.
@@ -174,6 +175,8 @@ they'd land in shell history and the process list. Use `PCAL_TOKEN` or
   darwin/linux/windows × amd64/arm64, `checksums.txt`, shell completions
   generated at build time, Homebrew formula pushed to `rorJeremy/homebrew-tap`
   (needs a `HOMEBREW_TAP_TOKEN` secret).
-- Install: `brew install rorJeremy/tap/pcal` or
+- Install: `brew install rorJeremy/tap/pcal`,
+  `mise use -g github:rorJeremy/promise-calendar-cli` (from the release
+  archives, no extra packaging), or
   `go install github.com/rorJeremy/promise-calendar-cli/cmd/pcal@latest`.
 - v0.1.0 once `pcal login` works against production.
