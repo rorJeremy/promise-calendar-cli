@@ -384,11 +384,17 @@ Commit: "Add release pipeline".
    - Create a fine-grained PAT with contents read/write on `homebrew-tap` only,
      and add it as the `HOMEBREW_TAP_TOKEN` Actions secret on
      `promise-calendar-cli`.
-   - Decide on a LICENSE. The repo is private now, and the cask doesn't need one.
-3. **Private repo caveat:** `go install …@latest`, `mise use github:…`, and the
-   release tarballs the cask downloads require the repo (or at least its releases) to be public.
-   Either make `promise-calendar-cli` public before v0.1.0, or accept that
-   installs need GitHub auth. **Decide before Phase 14.**
+   - Decide on a LICENSE. The repo is public, and with no license the code is
+     "all rights reserved". That's fine for installing and using it; add MIT
+     (as fizzy-cli and basecamp-cli do) only if you want to allow reuse.
+3. **Repo visibility: decided public (2026-09-29).** This lets `go install`,
+   `mise use github:…`, and the cask download work without GitHub auth, and
+   makes CI free (on a private repo, macOS runners count 10× against the
+   2,000-minute quota). Nothing in the repo is sensitive; access control is
+   the server's per-user tokens. Before the switch, commit authors were
+   rewritten to `1967644+rorJeremy@users.noreply.github.com`, and the repo's
+   git config uses that address, because the calendar app repo is private and
+   the hotmail address had never been public.
 
 ## Notes / risks
 
