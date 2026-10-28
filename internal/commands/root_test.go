@@ -85,6 +85,15 @@ func TestHelpListsPersistentFlags(t *testing.T) {
 	}
 }
 
+// --verbose logs each request and response status to stderr. Unlike
+// fizzy-cli's, it's hidden from help.
+func TestVerboseIsAHiddenFlag(t *testing.T) {
+	r := runPcal(t, "--verbose", "--help")
+
+	require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
+	require.NotContains(t, r.stdout, "--verbose")
+}
+
 func TestUsageErrors(t *testing.T) {
 	tests := []struct {
 		name    string

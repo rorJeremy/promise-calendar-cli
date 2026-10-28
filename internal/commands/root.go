@@ -28,12 +28,13 @@ type Streams struct {
 // globalOptions holds the persistent flags every command shares, plus
 // --csv, which only list commands define.
 type globalOptions struct {
-	json  bool
-	quiet bool
-	jq    string
-	url   string
-	yes   bool
-	csv   bool
+	json    bool
+	quiet   bool
+	jq      string
+	url     string
+	yes     bool
+	verbose bool
+	csv     bool
 }
 
 // app is the state one pcal run shares across its commands.
@@ -145,6 +146,10 @@ func newRootCmd(a *app) *cobra.Command {
 	flags.StringVar(&a.flags.jq, "jq", "", "filter the JSON envelope with a jq `expression` (implies --json)")
 	flags.StringVar(&a.flags.url, "url", "", "calendar `URL` (default https://calendar.promisechurch.io, or $PCAL_URL)")
 	flags.BoolVar(&a.flags.yes, "yes", false, "answer yes to confirmation prompts")
+	// Hidden, unlike fizzy-cli's: it's for debugging, and logs each request
+	// line and response status (never headers) to stderr.
+	flags.BoolVar(&a.flags.verbose, "verbose", false, "log each request and response status to stderr")
+	_ = flags.MarkHidden("verbose")
 
 	return root
 }
