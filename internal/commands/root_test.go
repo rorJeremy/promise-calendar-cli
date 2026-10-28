@@ -2,92 +2,123 @@ package commands
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// runPcal runs pcal in-process with args and returns its exit code, stdout,
-// and stderr.
-func runPcal(t *testing.T, args ...string) (int, string, string) {
-	t.Helper()
-	var stdout, stderr bytes.Buffer
-	code := Run(args, Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr})
-	return code, stdout.String(), stderr.String()
+// result is what one in-process pcal run produced.
+type result struct {
+	code   int
+	stdout string
+	stderr string
 }
 
-func TestRun(t *testing.T) {
+// runPcal runs pcal in-process with args, its stdout a pipe (not a
+// terminal), and returns what it produced.
+func runPcal(t *testing.T, args ...string) result {
+	t.Helper()
+	return run(t, false, args)
+}
+
+// runPcalInTerminal runs pcal in-process as if stdout were a terminal.
+func runPcalInTerminal(t *testing.T, args ...string) result {
+	t.Helper()
+	return run(t, true, args)
+}
+
+func run(t *testing.T, outTTY bool, args []string) result {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := Run(args, Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr, OutTTY: outTTY})
+	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// errorEnvelope is the JSON shape of a failed run.
+type errorEnvelope struct {
+	OK    bool `json:"ok"`
+	Error struct {
+		Code    string              `json:"code"`
+		Message string              `json:"message"`
+		Fields  map[string][]string `json:"fields"`
+	} `json:"error"`
+}
+
+// decodeError decodes stdout as an error envelope.
+func decodeError(t *testing.T, stdout string) errorEnvelope {
+	t.Helper()
+	var env errorEnvelope
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env), "stdout: %s", stdout)
+	require.False(t, env.OK)
+	return env
+}
+
+func TestHelp(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantCode   int
-		wantStdout string
-		wantStderr string
+		name string
+		args []string
 	}{
-		{
-			name:       "--help prints usage",
-			args:       []string{"--help"},
-			wantCode:   0,
-			wantStdout: "Usage:",
-		},
-		{
-			name:       "no arguments prints usage",
-			args:       nil,
-			wantCode:   0,
-			wantStdout: "Usage:",
-		},
-		{
-			name:       "persistent flags are accepted",
-			args:       []string{"--json", "--quiet", "--jq", ".data", "--url", "http://localhost:3000", "--yes", "--help"},
-			wantCode:   0,
-			wantStdout: "Usage:",
-		},
-		{
-			name:       "unknown command is a usage error",
-			args:       []string{"frobnicate"},
-			wantCode:   1,
-			wantStderr: `unknown command "frobnicate" for "pcal"`,
-		},
-		{
-			name:       "unknown flag is a usage error",
-			args:       []string{"--frobnicate"},
-			wantCode:   1,
-			wantStderr: "unknown flag: --frobnicate",
-		},
-		{
-			// Tokens never go in argv, where they'd land in shell history
-			// and the process list.
-			name:       "there is no --token flag",
-			args:       []string{"--token", "secret"},
-			wantCode:   1,
-			wantStderr: "unknown flag: --token",
-		},
-		{
-			// Only list commands define --csv.
-			name:       "--csv is not a persistent flag",
-			args:       []string{"--csv"},
-			wantCode:   1,
-			wantStderr: "unknown flag: --csv",
-		},
+		{"--help", []string{"--help"}},
+		{"no arguments", nil},
+		{"persistent flags are accepted", []string{"--json", "--jq", ".data", "--url", "http://localhost:3000", "--yes", "--help"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			code, stdout, stderr := runPcal(t, tt.args...)
+			r := runPcal(t, tt.args...)
 
-			require.Equal(t, tt.wantCode, code, "stderr: %s", stderr)
-			require.Contains(t, stdout, tt.wantStdout)
-			require.Contains(t, stderr, tt.wantStderr)
+			require.Equal(t, 0, r.code, "stderr: %s", r.stderr)
+			require.Contains(t, r.stdout, "Usage:")
+			require.Empty(t, r.stderr)
 		})
 	}
 }
 
 func TestHelpListsPersistentFlags(t *testing.T) {
-	code, stdout, _ := runPcal(t, "--help")
+	r := runPcal(t, "--help")
 
-	require.Equal(t, 0, code)
+	require.Equal(t, 0, r.code)
 	for _, flag := range []string{"--json", "--quiet", "--jq", "--url", "--yes"} {
-		require.Contains(t, stdout, flag)
+		require.Contains(t, r.stdout, flag)
 	}
+}
+
+func TestUsageErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{"unknown command", []string{"frobnicate"}, `unknown command "frobnicate" for "pcal"`},
+		{"unknown flag", []string{"--frobnicate"}, "unknown flag: --frobnicate"},
+		// Tokens never go in argv, where they'd land in shell history and
+		// the process list.
+		{"there is no --token flag", []string{"--token", "secret"}, "unknown flag: --token"},
+		// Only list commands define --csv.
+		{"--csv is not a persistent flag", []string{"--csv"}, "unknown flag: --csv"},
+		{"--json with --quiet", []string{"--json", "--quiet"}, "--json and --quiet can't be used together"},
+		{"an invalid --jq", []string{"--jq", ".data["}, "invalid --jq expression"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runPcal(t, tt.args...)
+
+			require.Equal(t, 1, r.code)
+			env := decodeError(t, r.stdout)
+			require.Equal(t, "usage", env.Error.Code)
+			require.Contains(t, env.Error.Message, tt.wantMsg)
+			require.Empty(t, r.stderr)
+		})
+	}
+}
+
+func TestUsageErrorInTerminal(t *testing.T) {
+	r := runPcalInTerminal(t, "frobnicate")
+
+	require.Equal(t, 1, r.code)
+	require.Empty(t, r.stdout)
+	require.Equal(t, "Error: unknown command \"frobnicate\" for \"pcal\"\nRun `pcal --help` for usage.\n", r.stderr)
 }
