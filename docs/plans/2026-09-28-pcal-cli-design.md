@@ -1,7 +1,8 @@
 # pcal — Promise Church Calendar CLI — Design
 
 - **Date:** 2026-09-28
-- **Status:** Approved design; reconciled with the shipped API on 2026-10-27
+- **Status:** Approved design; reconciled with the shipped API on 2026-10-27,
+  then audited against primary sources (Gate 1b, 2026-10-27)
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -78,9 +79,9 @@ pcal events image rm ID
 
 pcal tags list | create NAME [--color] | update ID [...] | delete ID [--yes]
 pcal rsvps list EVENT_ID [--date D] [--csv]
-pcal rsvps add EVENT_ID [--name --email --phone --date]
+pcal rsvps add EVENT_ID --name N --email E [--phone --date]
 pcal rsvps delete EVENT_ID RSVP_ID [--yes]
-pcal tokens list | revoke ID
+pcal tokens list | revoke ID [--yes]
 pcal website-token show | rotate [--yes]
 
 pcal version | completion {bash,zsh,fish} | skill install
@@ -98,6 +99,9 @@ pcal version | completion {bash,zsh,fish} | skill install
   `monthly on the 1st sun` → RRULE. `--rrule` passes a raw rule through; the
   server validates it (422 → exit 1).
 - `--tag` takes names and resolves them to IDs via `GET /tags`; unknown name → exit 1.
+  Tag names are unique only case-sensitively on the server, so an exact-case
+  match wins, then a unique case-insensitive one; two that differ only by case
+  → exit 8.
 - `events update` sends only the flags given; a flag with an empty value
   (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field.
 - Event `ID` arguments accept a UUID, an exact title, or a unique title
@@ -153,15 +157,22 @@ they'd land in shell history and the process list. Use `PCAL_TOKEN` or
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}
   {"ok": false, "error": {"code": "validation", "message": "Title can't be blank", "fields": {"title": ["can't be blank"]}}}
   ```
+  The success envelope matches fizzy-cli's. **The error envelope does not:**
+  fizzy-cli's (from `basecamp/cli` v0.2.1 `output/envelope.go`
+  `ErrorResponse`) is flat, `{"ok":false,"error":"<message>","code":"not_found","hint":"…"}`.
+  Found at the Gate 1b audit; left as designed pending Jeremy's call (keep the
+  nested shape, which carries 422 `fields`, or align with fizzy).
 - `--jq EXPR` — built-in gojq over the envelope; implies `--json`.
 - `--quiet` — bare `data`, no envelope.
 - `--csv` — lists only.
 - Deletes and `website-token rotate` confirm unless `--yes`. With no TTY and no
   `--yes`, they fail with exit 1.
 
-### Exit codes (fizzy-cli's, except 422 → 1)
+### Exit codes (fizzy-cli's numbers; 400 and 422 → 1)
 
-Decided by HTTP status alone. The body's `error` string is shown, and only
+fizzy-cli maps every 4xx it doesn't name, 400 included, and 422 to exit 7
+(`internal/errors/errors.go#FromHTTPStatus`). pcal treats both as invalid
+input (exit 1). Decided by HTTP status alone. The body's `error` string is shown, and only
 words a message (`read_only_token` → "token is read-only"); it never picks the
 exit code.
 
@@ -191,8 +202,9 @@ exit code.
 
 - Tag `v*` → `release.yml` runs goreleaser:
   darwin/linux/windows × amd64/arm64, `checksums.txt`, shell completions
-  generated at build time, Homebrew formula pushed to `rorJeremy/homebrew-tap`
-  (needs a `HOMEBREW_TAP_TOKEN` secret).
+  generated at build time, Homebrew cask pushed to `rorJeremy/homebrew-tap`
+  (needs a `HOMEBREW_TAP_TOKEN` secret). goreleaser v2 deprecated `brews`
+  formulas in favor of `homebrew_casks`; the install command is the same.
 - Install: `brew install rorJeremy/tap/pcal`,
   `mise use -g github:rorJeremy/promise-calendar-cli` (from the release
   archives, no extra packaging), or
