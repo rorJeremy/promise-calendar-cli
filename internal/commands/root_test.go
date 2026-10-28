@@ -43,6 +43,7 @@ type errorEnvelope struct {
 		Code    string              `json:"code"`
 		Message string              `json:"message"`
 		Fields  map[string][]string `json:"fields"`
+		Hint    string              `json:"hint"`
 	} `json:"error"`
 }
 
@@ -95,20 +96,23 @@ func TestVerboseIsAHiddenFlag(t *testing.T) {
 }
 
 func TestUsageErrors(t *testing.T) {
+	const helpHint = "Run `pcal --help` for usage."
+
 	tests := []struct {
-		name    string
-		args    []string
-		wantMsg string
+		name     string
+		args     []string
+		wantMsg  string
+		wantHint string
 	}{
-		{"unknown command", []string{"frobnicate"}, `unknown command "frobnicate" for "pcal"`},
-		{"unknown flag", []string{"--frobnicate"}, "unknown flag: --frobnicate"},
+		{"unknown command", []string{"frobnicate"}, `unknown command "frobnicate" for "pcal"`, helpHint},
+		{"unknown flag", []string{"--frobnicate"}, "unknown flag: --frobnicate", helpHint},
 		// Tokens never go in argv, where they'd land in shell history and
 		// the process list.
-		{"there is no --token flag", []string{"--token", "secret"}, "unknown flag: --token"},
+		{"there is no --token flag", []string{"--token", "secret"}, "unknown flag: --token", helpHint},
 		// Only list commands define --csv.
-		{"--csv is not a persistent flag", []string{"--csv"}, "unknown flag: --csv"},
-		{"--json with --quiet", []string{"--json", "--quiet"}, "--json and --quiet can't be used together"},
-		{"an invalid --jq", []string{"--jq", ".data["}, "invalid --jq expression"},
+		{"--csv is not a persistent flag", []string{"--csv"}, "unknown flag: --csv", helpHint},
+		{"--json with --quiet", []string{"--json", "--quiet"}, "--json and --quiet can't be used together", ""},
+		{"an invalid --jq", []string{"--jq", ".data["}, "invalid --jq expression", ""},
 	}
 
 	for _, tt := range tests {
@@ -119,6 +123,7 @@ func TestUsageErrors(t *testing.T) {
 			env := decodeError(t, r.stdout)
 			require.Equal(t, "usage", env.Error.Code)
 			require.Contains(t, env.Error.Message, tt.wantMsg)
+			require.Equal(t, tt.wantHint, env.Error.Hint)
 			require.Empty(t, r.stderr)
 		})
 	}

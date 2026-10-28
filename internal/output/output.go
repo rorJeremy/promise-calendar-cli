@@ -85,7 +85,8 @@ type envelope struct {
 }
 
 // errorEnvelope is the JSON shape of a failure. Unlike fizzy-cli's flat
-// {ok,error,code,hint}, the error is an object, so a 422 can carry fields.
+// {ok,error,code,hint}, the error is an object, so a 422 can carry fields
+// beside the code, message, and hint.
 type errorEnvelope struct {
 	OK    bool   `json:"ok"`
 	Error *Error `json:"error"`

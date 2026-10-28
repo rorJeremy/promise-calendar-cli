@@ -366,7 +366,7 @@ func validationError() *Error {
 }
 
 const validationEnvelope = `{"ok":false,"error":{"code":"validation","message":"Title can't be blank",` +
-	`"fields":{"title":["can't be blank"],"occurs_on":["can't be blank","is not a date"]}}}`
+	`"fields":{"title":["can't be blank"],"occurs_on":["can't be blank","is not a date"]},"hint":"Pass --title and --date."}}`
 
 func TestPrintErrorMachine(t *testing.T) {
 	tests := []struct {
@@ -376,8 +376,8 @@ func TestPrintErrorMachine(t *testing.T) {
 		want string
 		exit int
 	}{
-		{"JSON carries the fields but not the hint", Options{}, validationError(), validationEnvelope, 1},
-		{"no fields, no fields key", Options{JSON: true}, &Error{Code: CodeNotFound, Message: "not_found"}, `{"ok":false,"error":{"code":"not_found","message":"not_found"}}`, 2},
+		{"JSON carries the fields and the hint", Options{}, validationError(), validationEnvelope, 1},
+		{"no fields or hint, no keys for them", Options{JSON: true}, &Error{Code: CodeNotFound, Message: "not_found"}, `{"ok":false,"error":{"code":"not_found","message":"not_found"}}`, 2},
 		{"--quiet still prints the error envelope", Options{Quiet: true}, validationError(), validationEnvelope, 1},
 		{"--jq never filters an error", Options{JQ: ".data"}, validationError(), validationEnvelope, 1},
 		{"a plain error is an API error", Options{}, errors.New("boom"), `{"ok":false,"error":{"code":"api_error","message":"boom"}}`, 7},
@@ -455,5 +455,5 @@ func TestErrorJSONShape(t *testing.T) {
 	b, err := json.Marshal(validationError())
 
 	require.NoError(t, err)
-	require.JSONEq(t, `{"code":"validation","message":"Title can't be blank","fields":{"title":["can't be blank"],"occurs_on":["can't be blank","is not a date"]}}`, string(b))
+	require.JSONEq(t, `{"code":"validation","message":"Title can't be blank","fields":{"title":["can't be blank"],"occurs_on":["can't be blank","is not a date"]},"hint":"Pass --title and --date."}`, string(b))
 }

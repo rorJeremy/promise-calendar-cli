@@ -42,6 +42,7 @@ billing wording, and the plan/design mismatches.
 keep the nested error envelope, a deliberate deviation from fizzy-cli
 (Phase 2); accept the 5-minute upload timeout (Phase 4), huh's accessible
 mode (Phase 6), and the `debug.ReadBuildInfo` version fallback (Phase 13).
+At the Gate 2 review he added an optional `hint` to the error object.
 
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
@@ -168,13 +169,14 @@ Commit: "Scaffold pcal".
 
 **Red first** (`output_test.go`, table-driven):
 - Success envelope `{"ok":true,"data":…,"summary":"…"}`. Error envelope
-  `{"ok":false,"error":{"code","message","fields"?}}`.
+  `{"ok":false,"error":{"code","message","fields"?,"hint"?}}`.
 - Mode selection: `--json` or stdout not a TTY → JSON; `--quiet` → bare
   `data`; `--jq` → implies JSON and runs gojq over the envelope (compile error
   → exit 1, as fizzy-cli's `ErrJQValidation` is a usage error); `--csv` →
   lists only (list commands define the flag; see Phase 1).
 - TTY table (lipgloss) and key/value card. `NO_COLOR` disables styling.
-- The `Error` type carries `Code`, `Message`, `Fields`, and `ExitCode()`.
+- The `Error` type carries `Code`, `Message`, `Fields`, `Hint`, and
+  `ExitCode()`.
 
 Exit codes are a **const block**, pinned by a test like fizzy-cli
 `internal/errors/errors_test.go#TestExitCodes`: 0 ok, 1 usage/validation, 2 not
@@ -191,8 +193,9 @@ found, 3 auth, 4 forbidden, 5 rate limit, 6 network, 7 API, 8 ambiguous.
 > `{"ok":false,"error":"<message>","code":"<code>","hint":"…"}`
 > (`basecamp/cli` v0.2.1 `output/envelope.go` `ErrorResponse`; codes such as
 > `not_found`, `auth_required`, `api_error`). pcal keeps the design's nested
-> `{"ok":false,"error":{"code","message","fields"}}`, because it carries a
-> 422's per-field messages in `fields`.
+> `{"ok":false,"error":{"code","message","fields"?,"hint"?}}`, because it
+> carries a 422's per-field messages in `fields`. The optional `hint`, as in
+> fizzy-cli, was Jeremy's addition at the Gate 2 review.
 
 Commit: "Add output envelope, renderers, and exit codes".
 

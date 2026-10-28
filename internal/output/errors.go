@@ -60,8 +60,9 @@ func ExitCodeFor(code string) int {
 }
 
 // Error is a failure pcal reports to the user: as the JSON error envelope
-// {"ok":false,"error":{"code","message","fields"}} for scripts, or as text on
-// stderr for people. Its JSON form is the envelope's "error" object.
+// {"ok":false,"error":{"code","message","fields","hint"}} for scripts, or as
+// text on stderr for people. Its JSON form is the envelope's "error" object;
+// fields and hint are left out when empty.
 type Error struct {
 	// Code says what kind of failure this is, and picks the exit code.
 	Code string `json:"code"`
@@ -70,9 +71,9 @@ type Error struct {
 	// Fields holds a 422's messages per attribute, e.g.
 	// {"title": ["can't be blank"]}.
 	Fields map[string][]string `json:"fields,omitempty"`
-	// Hint tells a person what to do next. It's printed in human output
-	// only, so the envelope keeps the design's code/message/fields shape.
-	Hint string `json:"-"`
+	// Hint says what to do next, e.g. "Run `pcal login`." (fizzy-cli's
+	// envelope has a hint too).
+	Hint string `json:"hint,omitempty"`
 	// Cause is the underlying error, if any.
 	Cause error `json:"-"`
 }
