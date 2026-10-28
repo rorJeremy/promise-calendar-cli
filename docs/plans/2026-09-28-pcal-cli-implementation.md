@@ -1,15 +1,28 @@
 # pcal — Implementation Plan (v0.1.0)
 
 Companion to `2026-09-28-pcal-cli-design.md`. Branch: `initial-implementation`.
-Server contract: `promise-church-calendar` →
-`docs/plans/2026-09-28-staff-json-api-implementation.md` (PR 2), especially the
-event JSON shape, nested request bodies, error shapes, and the golden JSON in
-`test/fixtures/files/api/`.
+Server contract (the source of truth; PR #112, merged and deployed): in
+`promise-church-calendar` on `main`, the "# Staff API" section of
+`docs/api.md` and the 17 golden files in `test/fixtures/files/api/`. When this
+plan and those disagree, they win. The server's PR 2 implementation plan
+(`docs/plans/2026-09-28-staff-json-api-implementation.md`) is history now; the
+API changed during its review.
 
 **Amended 2026-09-28 after reviewing basecamp-cli's auth** (design doc updated
 to match): tokens never go in argv (no `--token` flag;
 `auth login --with-token` reads stdin); `logout` revokes tokens that `pcal
 login` minted; `login` has a paste-the-callback fallback on headless hosts.
+
+**Amended 2026-10-27 against the shipped API** (Gate 1, checked against
+`docs/api.md`, the golden files, `config/routes.rb`, `authentication.rb`, and
+the controllers and models behind them): list items are occurrences with
+their own `occurrence_*` fields; `q` matches anywhere in a title; 422 values
+are lists, in body order; Rails-default 400/404/406 bodies; `/cli/token` takes
+a flat body and can answer 429; the server validates RRULEs; `starts_at` and
+`ends_at` are stored independently of `occurs_on`, so the CLI keeps them on
+the event's dates; multipart encoding rules; the 365-occurrence expansion
+cap; RSVP `--date` is the `occurrence` param. Phase 0 now says the old Go is a
+Homebrew install.
 
 TDD throughout (`go test`, table-driven, `testify/require`). Commit once per
 phase, and run `make check` at the end of each phase.
@@ -26,17 +39,19 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
   golangci-lint, so Phase 0 is just: in `~/promise-calendar-cli`, run
   `mise install`, then `mise exec -- go version` → `go1.27.1`. Nothing comes
   from Homebrew.
-- **Retire the old Go (recommended).** `/usr/local/bin/go` is **1.17.2**, a pkg
-  install. Inside the repo the mise-activated `go` shadows it, but it's still
-  what non-mise shells and other directories find. Remove it:
-  `sudo rm -rf /usr/local/go /usr/local/bin/go /usr/local/bin/gofmt`, and
-  optionally `mise use -g go@1.27` for a global default.
+- **Retire the old Go (recommended).** `/usr/local/bin/go` is **1.17.2**, a
+  Homebrew install (`/usr/local/bin/go -> ../Cellar/go/1.17.2/bin/go`; `brew
+  list --versions go` → `go 1.17.2`). Inside the repo the mise-activated `go`
+  shadows it, but it's still what non-mise shells and other directories find.
+  Remove it with `brew uninstall go`, and optionally `mise use -g go@1.27` for
+  a global default.
 - **Non-interactive shells** (agents, scripts) don't run mise's prompt hook.
   Prefix commands with `mise exec --` (e.g. `mise exec -- make check`). This
   was verified in the calendar repo, where bare `ruby` resolved to rbenv.
-- PR 2 Phases 7–12 are reviewed (the JSON contract is fixed). The CLI can be
-  built against golden JSON before PR 2 deploys. Only the live smoke test
-  (Phase 14) needs production.
+- **Done:** PR 2 (#112) is merged and deployed, and was checked in production
+  on 2026-10-27 (401 + `WWW-Authenticate` without credentials; a real personal
+  access token against `/my/identity`). The CLI is built against the golden
+  JSON; the live smoke test (Phase 14) is unblocked.
 
 ## Phase 1 — Scaffold, CI, Makefile
 
@@ -126,14 +141,36 @@ Commit: "Add config and credential storage".
 ## Phase 4 — `internal/client`
 
 **Red first** against `httptest.Server`:
-- Headers: `Authorization: Bearer`, `Accept: application/json`, `User-Agent`.
-- JSON bodies are **nested** (`{"event": {...}}`), per the PR 2 params-wrapping
-  note. A helper `Body(resource string, attrs map[string]any)`.
-- Multipart (`event[featured_image]` + other fields) for image upload.
-- Status → error: 400 → 1, 401 → 3 (hint "run `pcal login`"), 403 → 4 (message
-  "token is read-only" when the body says `read_only_token`), 404 → 2, 422 → 1
-  with `fields` from `{"errors":{…}}` and the message built from the first
-  field ("Title can't be blank"), 429 → 5, 5xx → 7. Dial/timeout → 6.
+- Headers: `Authorization: Bearer`, `Accept: application/json` (always: a
+  bearer token on a non-JSON request gets a plain-text 401), `User-Agent`, and
+  `Content-Type: application/json` on JSON bodies. The `pcal/<version> (…)`
+  agent passes the app's `allow_browser versions: :modern` check (verified:
+  the `useragent` gem parses it as browser "pcal", which isn't
+  version-guarded, the same path as curl).
+- JSON bodies are **nested** (`{"event": {...}}`): `docs/api.md` → Requests
+  says a flat body silently drops non-column keys such as `tag_ids`. A helper
+  `Body(resource string, attrs map[string]any)`. The one exception is
+  `POST /cli/token`, whose body is flat (`{"code","code_verifier"}`).
+- Multipart for image upload; encoding rules in Phase 11.
+- Status → error, **decided by HTTP status only**; the body's `error` string
+  is shown, never branched on (except `read_only_token`, which `docs/api.md`
+  allows): 400 → 1, 401 → 3 (hint "run `pcal login`"), 403 → 4 (message
+  "token is read-only" when the body says `read_only_token`), 404 → 2, 422 → 1,
+  429 → 5, 5xx → 7, any other status (e.g. 406) → 7. Dial/timeout → 6.
+- Error bodies come in three shapes, and the parser must take all of them:
+  `{"error":"invalid_date"}` (the app's), `{"status":400,"error":"Bad
+  Request"}` (Rails defaults for malformed JSON, unknown routes, 406), and
+  `{"errors":{"title":["can't be blank"]}}` (422). A body that isn't JSON (a
+  proxy's 502 page) falls back to the status text.
+- 422: `fields` = the `errors` object (values are **lists** of messages). The
+  message comes from the **first field in body order** ("Title can't be
+  blank"), so decode the object with `json.Decoder` tokens, not a Go map
+  (map order is random). Humanize the key as Rails' `full_messages` does
+  (`occurs_on` → "Occurs on"; `base` → the bare message). The same shape comes
+  from event, tag, RSVP, and image-removal failures.
+- Responses are decoded leniently (unknown fields ignored), so a server
+  addition never breaks a released binary. Only the Phase 5 golden tests are
+  strict.
 - 30-second timeout. `--verbose` (hidden) logs requests to stderr like
   fizzy-cli `client.go:211`.
 
@@ -141,13 +178,32 @@ Commit: "Add HTTP client".
 
 ## Phase 5 — Golden JSON contract
 
-- `testdata/api/*.json`: copied from the Rails repo's
+- `testdata/api/*.json`: the 17 files copied from the Rails repo's
   `test/fixtures/files/api/` via `make golden RAILS=../promise-church-calendar`.
-- `internal/client/types.go`: `Event`, `Occurrence`, `Tag`, `RSVP`, `Identity`,
-  `AccessToken`, `WebsiteToken`.
+- `internal/client/types.go`, one type per golden shape:
+  - `Event` (`event.json`). Its nested `tags` items are `{id,name,color}`
+    with no `position`, so they get their own `EventTag` type.
+    `location` is an object whose members are all nullable;
+    `latitude`/`longitude` are `*float64`. `image` and `created_by` are
+    nullable objects.
+  - `Occurrence` (`events.json` items) = `Event` embedded, plus
+    `occurrence_date`, `occurrence_starts_at`, `occurrence_ends_at` (the last
+    two null for all-day events).
+  - `Tag` (`tag.json`, `tags.json`), `RSVP` (`rsvps.json`; `phone` and
+    `occurrence_date` nullable), `Identity` (`identity.json`),
+    `AccessToken` (`access_tokens.json`), `WebsiteToken` (`api_token.json`),
+    `RotatedWebsiteToken` (`api_token_rotated.json`), `CLIToken`
+    (`cli_token.json`: `token`, `permission`, `user{id,name}`).
+  - `APIError` (the seven `error_*.json` with an `error` key) and
+    `ValidationErrors` (`error_validation.json`).
+- Timestamps stay **strings** in these wire types (the server sends
+  `2099-10-25T18:00:00.000-05:00`; a `time.Time` re-marshals without the
+  milliseconds, which would break the round-trip). Parse them when rendering.
 - **Red:** decode every golden file into its type with
-  `DisallowUnknownFields` (catches server-side additions) and round-trip it.
-  This becomes the drift alarm when the API changes.
+  `DisallowUnknownFields` (catches server-side additions) and round-trip it
+  (re-encode and compare as JSON values, not bytes). A test also fails if a
+  file in `testdata/api/` has no entry in the table, so a new server file
+  can't go unpinned. This becomes the drift alarm when the API changes.
 
 Commit: "Pin API contract with golden JSON".
 
@@ -165,7 +221,8 @@ Commit: "Pin API contract with golden JSON".
 - `whoami`: identity JSON/card; caches `time_zone` in config.
 - `logout` (basecamp-cli `revoke.go#LogoutCredential` semantics):
   - source `browser` → `DELETE /my/current_access_token`. 204 or 401 (already
-    gone) → "Logged out; token revoked". Network error or 5xx → still forget
+    gone) → "Logged out; token revoked". This works for a read token too (the
+    server skips the read-only check on this one route). Network error or 5xx → still forget
     locally, and warn "couldn't revoke; it may still be live — revoke at
     /my/access_tokens". Exit 0 either way, since the local credential is gone.
   - source `imported` → forget locally only, with the hint "this token is still
@@ -185,11 +242,25 @@ Commit: "Add token login, status, whoami, logout".
   with `open` / `xdg-open` / `rundll32 url.dll,FileProtocolHandler` (basecamp-cli
   `auth.go#openBrowser` delegates to a host util the same way). **Always print
   the URL too.**
+- The server rejects bad parameters with a 400 **page**, never a redirect, so
+  the CLI would just wait out its timeout. Send only valid ones
+  (`Cli::AuthorizationsController#valid_request?`): `port` 1024–65535 (an
+  ephemeral port always is), `state` and `code_challenge` base64url (43
+  chars), `permission` `read`|`write`, and a non-blank `device`. If
+  `os.Hostname()` fails or is blank, send `device=unknown host`. The server
+  truncates `device` to 60 characters and names the token "pcal on <device>".
 - Handle `/callback`: state mismatch → 400 page + error. `error=access_denied`
   → exit 3 "Authorization denied". Success page: "You can close this tab".
   Timeout after 5 minutes → exit 3. Only the first callback is accepted.
-- `POST /cli/token {code, code_verifier}` → store → `/my/identity` → "Logged in
+- `POST /cli/token` with a **flat** JSON body `{"code","code_verifier"}` → 201
+  `{token, permission, user{id,name}}` → store → `/my/identity` → "Logged in
   as <name> (<permission>)".
+  - 400 `invalid_grant` (unknown, expired, reused, or wrong verifier; every
+    attempt consumes the code) → exit 3 "That login code expired or was
+    already used. Run `pcal login` again."
+  - 429 `rate_limited` (more than 10 a minute from one IP) → exit 5 "Too many
+    login attempts. Wait a minute, then run `pcal login` again." No automatic
+    retry.
 - `--read-only` → `permission=read`. `--url` overrides the base.
 - The stored credential has source `browser`.
 - **Headless / paste fallback** (basecamp-cli `LoginOptions.defaults`,
@@ -210,8 +281,9 @@ Commit: "Add token login, status, whoami, logout".
     Open the link above." and keep waiting.
 
 **Red** (drive the listener directly; the Rails side is an `httptest.Server`):
-success; state mismatch; access_denied; timeout (injected short duration);
-`/cli/token` 400 → exit 3; a second callback ignored. The browser opener is an
+success (asserting the flat body and the authorization URL's parameters);
+state mismatch; access_denied; timeout (injected short duration);
+`/cli/token` 400 → exit 3; `/cli/token` 429 → exit 5; a second callback ignored. The browser opener is an
 injectable func. Paste mode: the URL is parsed (success, `error=access_denied`,
 wrong state, garbage input → re-prompt once, then exit 1). `HeadlessReason`
 table test with an injected env and GOOS. `--local` overrides the detection.
@@ -225,15 +297,26 @@ Commit: "Add browser login".
   (strictly after this week's). A bare weekday = the next occurrence, today
   included. Invalid → exit 1.
 - Times: `10am`, `10:30am`, `6:30pm`, `18:30`, `noon`. Combined with a date →
-  RFC 3339 with the zone offset (DST-aware: check both Oct 31 and Nov 2).
+  RFC 3339 with the zone offset (DST-aware: check both Oct 31 and Nov 2). The
+  server would read an offset-less time as America/Chicago, but the CLI always
+  sends the offset. Import `time/tzdata` so the zone loads on Windows and on
+  minimal Linux images.
 - `--repeat` → RRULE: `daily` → `FREQ=DAILY`; `weekly on sun` →
   `FREQ=WEEKLY;BYDAY=SU`; `every 2 weeks on tue,thu` →
   `FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH`; `monthly on the 1st sun` →
   `FREQ=MONTHLY;BYDAY=1SU`; `monthly on the last fri` → `BYDAY=-1FR`;
   `yearly` → `FREQ=YEARLY`. Unknown → exit 1 with the accepted forms.
-  (These are exactly the RRULE parts the server's `RecurrenceExpandable`
-  supports: FREQ, INTERVAL, BYDAY, COUNT, UNTIL.)
-- `--rrule RAW` passes through; `--repeat` and `--rrule` together → exit 1.
+  The server now **validates** rules (`docs/api.md` → Recurrence rules;
+  `RecurrenceExpandable#recurrence_rule_must_be_expandable`): only FREQ,
+  INTERVAL, BYDAY, COUNT, UNTIL, each once; INTERVAL/COUNT positive; UNTIL a
+  date; weekly BYDAY = plain days; monthly BYDAY = one day with a position
+  from -5 to 5; no BYDAY with DAILY/YEARLY; no `RRULE:` prefix. Every
+  `--repeat` output must satisfy that; a test asserts each one against those
+  rules.
+- `--rrule RAW` passes through **verbatim**. The CLI doesn't re-validate it
+  (no second copy of the rules); a bad rule comes back as a 422 on
+  `recurrence_rule` with the server's message, exit 1. `--repeat` and
+  `--rrule` together → exit 1.
 
 Commit: "Add date, time, and recurrence parsing".
 
@@ -241,6 +324,9 @@ Commit: "Add date, time, and recurrence parsing".
 
 This establishes the command/test pattern the rest copy.
 `list | create NAME [--color] | update ID [--name --color --position] | delete ID [--yes]`.
+Body `{"tag":{name,color,position}}`. `color` is optional and `#RRGGBB` when
+given; a duplicate name or a bad color is a 422. `GET /tags` is already
+ordered by position, then name; keep that order.
 Red: each against the fake server and golden JSON. 422 → exit 1 with fields.
 Delete without `--yes` and without a TTY → exit 1. Delete with a TTY → huh
 confirm (injectable).
@@ -249,46 +335,123 @@ Commit: "Add tags commands".
 
 ## Phase 10 — `pcal events list | show`
 
-- `list`: `--from/--to` (default today → +30), repeatable `--tag NAME` →
-  resolved via `GET /tags` (unknown → exit 1), `--search Q`, `--unpublished`
-  (`published=false`), `--website`. Table columns: date, time, title, tags,
-  flags (draft / web / rsvp). Summary: "12 events Oct 1–31". `--csv`.
-- `show ID`: card with every field. `recurrence_text` is shown when present.
+- `list`: `--from/--to` → `start`/`end` (`YYYY-MM-DD`, `end` inclusive;
+  default today → +30, the server's default too). `--to` before `--from` →
+  exit 1 before any request (the server would answer 400
+  `invalid_date_range`). Repeatable `--tag NAME` → resolved via `GET /tags`
+  (unknown → exit 1) → `tag_ids[]=…` (any of the tags). `--search Q` → `q`
+  (case-insensitive, **anywhere** in the title). `--unpublished` →
+  `published=false`, `--website` → `website=true`.
+- The response is **occurrences**: a recurring event appears once per
+  occurrence, each item the full event (same as `show`) plus
+  `occurrence_date`, `occurrence_starts_at`, `occurrence_ends_at`. The table
+  uses those, never the series `occurs_on`/`starts_at`: date =
+  `occurrence_date` (for a multi-day event, the span `occurrence_date` →
+  `occurrence_date + (ends_on − occurs_on)`), time = `occurrence_starts_at`
+  (blank → "all day"). An item can start **before** `--from` (a multi-day
+  occurrence already under way); show it, don't filter it out. Keep the
+  server's order (date, then start time with all-day last, then title).
+  Columns: date, time, title, tags, flags (draft / web / rsvp). Summary:
+  "12 events Oct 1–31" (counts occurrences). `--csv`.
+- `show ID`: card with every field. Dates there are the **series** dates;
+  `recurrence_text` is shown when present.
 - **ID resolution** (`internal/commands/resolve.go`): a UUID passes through.
-  Otherwise, a case-insensitive **title prefix** is matched against
-  `GET /events.json?q=<arg>&start=<today-1y>&end=<today+2y>`, deduped by id.
-  0 → exit 2, >1 → exit 8 listing the candidates (id, title, first date).
-  *Limitation:* events wholly outside that window need the UUID. The list
+  Otherwise fetch `GET /events?q=<arg>&start=<today-1y>&end=<today+2y>`,
+  dedupe by id, then keep only titles that **start with** the argument
+  (case-insensitive), because `q` matches anywhere. 0 → exit 2 with the hint
+  "use the event's ID (`pcal events list --search …` shows it)", >1 → exit 8
+  listing the candidates (id, title, first date).
+  *Limitations:* events wholly outside that window need the UUID. The list
   endpoint is occurrence-based, and a wider window costs expansion time on the
-  server.
+  server. The server also stops expanding a series after **365 occurrences
+  counted from the series start** (`RecurrenceExpandable::MAX_OCCURRENCES`),
+  so a daily series that began more than a year before the window has no
+  occurrences in it, and neither `list` nor title resolution sees it. That's
+  a known server limitation; the README says to use the UUID.
 
 Commit: "Add events list and show".
 
 ## Phase 11 — `pcal events create | update | delete | toggles | image`
 
-- `create`: flags per the design. Missing `--title`/`--date` with a TTY → huh
-  form for just those; without a TTY → exit 1. `--description-file F` (`-` =
-  stdin). `--image F` → multipart. `--draft` → `published=false`. `--website`,
-  `--rsvp`.
+- Flag → `event` attribute (request names differ from the response's):
+
+  | Flag | Attribute |
+  |---|---|
+  | `--title` | `title` (required) |
+  | `--date` | `occurs_on` (required) |
+  | `--end-date` | `ends_on` (multi-day; on or after `occurs_on`) |
+  | `--start`, `--end` | `starts_at`, `ends_at` (see "Dates and times" below) |
+  | `--all-day` | `starts_at: null`, `ends_at: null` (all-day = neither time) |
+  | `--repeat` / `--rrule` | `recurrence_rule` |
+  | `--location-name`, `--address` | `location_name`, `location_address` |
+  | `--map-url` | `location_map_url` (Google Maps HTTPS links only; else 422) |
+  | `--tag NAME…` | `tag_ids` (**replaces** the event's tags) |
+  | `--description`, `--description-file` | `description` |
+  | `--notes` | `internal_notes` |
+  | `--image F`, `--image-alt` | `featured_image` (multipart), `image_alt` |
+  | `--website`, `--rsvp`, `--draft` | `show_on_website: true`, `rsvp_enabled: true`, `published: false` |
+
+  The booleans are always sent as JSON `true`/`false` (null is a 422). On
+  create, omitted ones take the server defaults: published, not on the
+  website, RSVPs off.
+- `create`: missing `--title`/`--date` with a TTY → huh form for just those;
+  without a TTY → exit 1. `--description-file F` (`-` = stdin).
 - `update ID`: only the flags given are sent (a `cmd.Flags().Changed` guard, so
-  unset flags never clear fields).
+  unset flags never clear fields). A flag given an empty value clears that
+  field: `--end-date ''` → `ends_on: null`, `--rrule ''` → stops repeating,
+  `--tag ''` → `tag_ids: []`, `--description ''`, and so on.
+- **Dates and times.** The server stores `starts_at`/`ends_at` as full
+  timestamps, independent of `occurs_on`/`ends_on`, and computes each
+  occurrence's times by shifting `starts_at` by the days between `occurs_on`
+  and the occurrence. Nothing on the server keeps them consistent, so the CLI
+  does: `starts_at` = `occurs_on` + `--start`; `ends_at` = (`ends_on`, or
+  `occurs_on` for a single-day event) + `--end`. On `update`, when any of
+  `--date`, `--end-date`, `--start`, `--end` is given for an event with
+  times, `GET` the event first, then send **both** times rebuilt from the
+  resulting dates and wall-clock times. So `update --date sat` moves a 6pm
+  event to Saturday at 6pm instead of leaving its times on the old day.
+  `--all-day` with `--start`/`--end` → exit 1.
+- **Multipart** (any request with `--image`): every attribute becomes a form
+  field `event[name]`; booleans `true`/`false`; null → an empty value; arrays
+  → repeated `event[tag_ids][]` (one empty `event[tag_ids][]` clears tags;
+  Rails drops blank ids). The file goes in `event[featured_image]`. JPEG, PNG,
+  GIF, or WebP under 10 MB; the server's 422 is the authority.
 - `delete ID [--yes]` → 204.
-- `publish|unpublish`, `website on|off`, `rsvp on|off` → a one-field `PATCH`.
-- `image set ID FILE [--alt]` → multipart `PATCH`. `image rm ID` →
-  `DELETE /events/:id/image`.
+- `publish|unpublish`, `website on|off`, `rsvp on|off` → a one-field `PATCH`
+  (`published`, `show_on_website`, `rsvp_enabled`).
+- `image set ID FILE [--alt]` → multipart `PATCH` (`event[featured_image]`,
+  `event[image_alt]`). A new upload replaces a linked `image_url`. `image rm
+  ID` → `DELETE /events/:id/image`: 204 even when there's no image; 422 (exit
+  1, fields shown) if the event is otherwise invalid, in which case nothing is
+  removed.
+- Unknown tag ids are a 422 on `tag_ids` (not a 404). Names are resolved
+  first, so this only happens if a tag is deleted mid-command.
 - Red: request-body assertions for each, including the nested `event` key,
-  `tag_ids` resolution, RFC 3339 times, and RRULE. 403 with a read token → exit 4.
+  `tag_ids` resolution, RFC 3339 times on the right dates (create, and update
+  moving a timed event), the multipart encoding, and RRULE. 403 with a read
+  token → exit 4.
 
 Commit: "Add event write commands".
 
 ## Phase 12 — `pcal rsvps`, `tokens`, `website-token`
 
-- `rsvps list EVENT [--date D] [--csv]`, `add EVENT --name --email [--phone --date]`
-  (a recurring event without `--date` → server 422 → exit 1, shown verbatim),
-  `delete EVENT RSVP_ID [--yes]`.
-- `tokens list | revoke ID [--yes]`.
-- `website-token show | rotate [--yes]`. Rotate prints the new token once, with
-  a warning that the church website must be updated.
+- `rsvps list EVENT [--date D] [--csv]` → `GET /events/:id/rsvps`, newest
+  first; `--date` → `?occurrence=YYYY-MM-DD` (the param is `occurrence`, not
+  `date`; a bad date is a 400 `invalid_date`, so parse it first → exit 1).
+- `rsvps add EVENT --name --email [--phone --date]` → `{"rsvp":{name, email,
+  phone, occurrence_date}}`. A recurring event without `--date`, or an event
+  with RSVPs turned off, → server 422 → exit 1, shown verbatim ("Occurrence
+  date is required for recurring events", "Event does not accept RSVPs").
+- `rsvps delete EVENT RSVP_ID [--yes]` → 204; 404 when the RSVP belongs to
+  another event.
+- `tokens list` → `GET /my/access_tokens` (yours only, newest first).
+  `tokens revoke ID [--yes]` → `DELETE /my/access_tokens/:id` (404 when it
+  isn't yours).
+- `website-token show` → `GET /api_token` (`exists`, `description`,
+  `last_used_at`, `created_at`; all but `exists` null when there's none).
+  `rotate [--yes]` → `POST /api_token` → 201 `{token, created_at}`. It prints
+  the new token once, with a warning that the church website must be updated
+  now, because the old token stops working immediately.
 
 Commit: "Add RSVP, token, and website-token commands".
 
@@ -366,7 +529,7 @@ homebrew_casks:
   mise's `github` backend picks the archive for the OS/arch from goreleaser's
   `pcal_<version>_<os>_<arch>` names.
 
-Live smoke test against production (after PR 2 deploys): `pcal login` →
+Live smoke test against production (PR 2 is deployed, so this is unblocked): `pcal login` →
 `whoami` → `events list` → create a draft test event → update → image set/rm →
 delete → `pcal login --read-only` and a write attempt → exit 4 → `pcal logout`
 (the token disappears from `/my/access_tokens`) → an SSH-session login via
@@ -377,7 +540,7 @@ Commit: "Add release pipeline".
 ## Manual follow-ups (Jeremy)
 
 1. Phase 0: `mise install` in the repo (after Phase 1 adds `mise.toml`), and
-   remove the old 1.17.2 pkg Go.
+   remove the old Homebrew Go 1.17.2 with `brew uninstall go`.
 2. Before tagging v0.1.0:
    - Create the **public** repo `rorJeremy/homebrew-tap`. It must be public for
      `brew install` to work without auth.
@@ -402,5 +565,8 @@ Commit: "Add release pipeline".
   Rails-side golden test (PR 2 Phase 12).
 - **Title resolution window** (Phase 10) is a deliberate limitation. The UUID
   always works.
+- **365-occurrence cap** (server, not fixed): long-running daily series drop
+  out of `events list` and title resolution in later windows. Documented in
+  the README; a server fix would need no CLI change.
 - **Keyring on headless Linux** falls back to a `0600` file with a warning
   (design). CI forces the fallback with `PCAL_NO_KEYRING=1`.

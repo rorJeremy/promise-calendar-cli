@@ -1,10 +1,12 @@
 # pcal — Promise Church Calendar CLI — Design
 
 - **Date:** 2026-09-28
-- **Status:** Approved design, ready for implementation planning
+- **Status:** Approved design; reconciled with the shipped API on 2026-10-27
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
-  token auth). This CLI depends on that PR 2 being deployed.
+  token auth). PR 2 (#112) is merged and deployed. The contract is the
+  "# Staff API" section of that repo's `docs/api.md` plus its golden JSON in
+  `test/fixtures/files/api/`; where this doc and those differ, they win.
 
 ## Goal
 
@@ -87,12 +89,21 @@ pcal version | completion {bash,zsh,fish} | skill install
 
 - Dates: `2026-10-04`, `today`, `tomorrow`, `sat`, `next sun`. Times: `10am`,
   `6:30pm`, `18:30`. Converted to ISO 8601 in the app's time zone
-  (`time_zone` from `/my/identity`; the app uses America/Chicago).
+  (`time_zone` from `/my/identity`; the app uses America/Chicago). The server
+  stores times separately from dates, so the CLI always puts `--start` on the
+  event's start date and `--end` on its end date, and an update that moves a
+  timed event moves its times too.
 - `--repeat`: `daily`, `weekly on sun`, `every 2 weeks on tue,thu`,
-  `monthly on the 1st sun` → RRULE. `--rrule` passes a raw rule through.
+  `monthly on the 1st sun` → RRULE. `--rrule` passes a raw rule through; the
+  server validates it (422 → exit 1).
 - `--tag` takes names and resolves them to IDs via `GET /tags`; unknown name → exit 1.
-- Event `ID` arguments accept a UUID or a unique title prefix; multiple
-  matches → exit 8 listing candidates.
+- `events update` sends only the flags given; a flag with an empty value
+  (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field.
+- Event `ID` arguments accept a UUID or a unique title prefix (the server's
+  search matches anywhere in a title, so the CLI keeps only prefix matches);
+  multiple matches → exit 8 listing candidates.
+- `events list` shows occurrences: a recurring event appears once per
+  occurrence, dated by the server's `occurrence_*` fields.
 - `publish`, `website on`, `rsvp on`, etc. are `PATCH /events/:id` with one field.
 
 ## Auth
@@ -145,7 +156,11 @@ they'd land in shell history and the process list. Use `PCAL_TOKEN` or
 - Deletes and `website-token rotate` confirm unless `--yes`. With no TTY and no
   `--yes`, they fail with exit 1.
 
-### Exit codes (same as fizzy-cli)
+### Exit codes (fizzy-cli's, except 422 → 1)
+
+Decided by HTTP status alone. The body's `error` string is shown, and only
+words a message (`read_only_token` → "token is read-only"); it never picks the
+exit code.
 
 | Code | Meaning |
 |---|---|
