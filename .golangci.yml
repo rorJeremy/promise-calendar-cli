@@ -10,6 +10,13 @@ linters:
   enable:
     - gosec
     - revive
+  exclusions:
+    rules:
+      # Tests read temp files, loosen permissions on purpose, and use fake
+      # tokens. fizzy-cli excludes gosec from tests too.
+      - path: _test\.go
+        linters:
+          - gosec
 
 issues:
   max-issues-per-linter: 0
