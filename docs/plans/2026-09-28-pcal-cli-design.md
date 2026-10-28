@@ -157,11 +157,12 @@ they'd land in shell history and the process list. Use `PCAL_TOKEN` or
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}
   {"ok": false, "error": {"code": "validation", "message": "Title can't be blank", "fields": {"title": ["can't be blank"]}}}
   ```
-  The success envelope matches fizzy-cli's. **The error envelope does not:**
-  fizzy-cli's (from `basecamp/cli` v0.2.1 `output/envelope.go`
-  `ErrorResponse`) is flat, `{"ok":false,"error":"<message>","code":"not_found","hint":"…"}`.
-  Found at the Gate 1b audit; left as designed pending Jeremy's call (keep the
-  nested shape, which carries 422 `fields`, or align with fizzy).
+  The success envelope matches fizzy-cli's. **The error envelope deliberately
+  does not** (Jeremy's decision, 2026-10-27, at Gate 2): fizzy-cli's (from
+  `basecamp/cli` v0.2.1 `output/envelope.go` `ErrorResponse`) is flat,
+  `{"ok":false,"error":"<message>","code":"not_found","hint":"…"}`. pcal keeps
+  the nested shape because it carries a 422's per-field messages in `fields`,
+  which a flat message string can't.
 - `--jq EXPR` — built-in gojq over the envelope; implies `--json`.
 - `--quiet` — bare `data`, no envelope.
 - `--csv` — lists only.

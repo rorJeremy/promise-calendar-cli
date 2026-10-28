@@ -1,0 +1,6 @@
+# Tool versions for pcal development, managed by mise (https://mise.jdx.dev).
+# CI installs the same versions via jdx/mise-action, from mise.lock.
+[tools]
+go = "1.27.3"
+golangci-lint = "2.15.0"
+goreleaser = "2.19.0"

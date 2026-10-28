@@ -1,0 +1,4 @@
+# Build output (make build, goreleaser, and its completion hook)
+bin/
+dist/
+completions/

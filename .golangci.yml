@@ -1,0 +1,16 @@
+# golangci-lint v2 configuration. The version is pinned in mise.toml.
+version: "2"
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  # Plus two that fizzy-cli also enables: gosec (security) and revive, whose
+  # default rules include `exported` and `package-comments` (doc comments on
+  # every exported identifier and package).
+  enable:
+    - gosec
+    - revive
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

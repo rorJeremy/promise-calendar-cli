@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    name: make check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      # No keychain on a runner: use the 0600 credentials file, as
+      # basecamp-cli's CI does with BASECAMP_NO_KEYRING.
+      PCAL_NO_KEYRING: "1"
+      # Install only the URLs and checksums recorded in mise.lock.
+      MISE_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installs go, golangci-lint, and goreleaser from mise.toml and mise.lock
+      # (mise install --locked), caches them, and puts them on PATH.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+
+      - run: make check

@@ -36,8 +36,12 @@ cask hook (deprecated syntax that fails `goreleaser check`), the `dist/` path,
 `mise outdated --bump`, `go mod edit -go=1.26`, six (not seven) `error`
 golden files, the 400 → 1 and error-envelope deviations from fizzy-cli, the
 fizzy/basecamp citations, the `--tag` flag type, the license and Actions
-billing wording, and the plan/design mismatches. Additions are marked
-*(added at Gate 1b)* for Jeremy to accept or drop.
+billing wording, and the plan/design mismatches.
+
+**Jeremy's Gate 2 decisions (2026-10-27)** on the items the audit left open:
+keep the nested error envelope, a deliberate deviation from fizzy-cli
+(Phase 2); accept the 5-minute upload timeout (Phase 4), huh's accessible
+mode (Phase 6), and the `debug.ReadBuildInfo` version fallback (Phase 13).
 
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
@@ -182,12 +186,13 @@ found, 3 auth, 4 forbidden, 5 rate limit, 6 network, 7 API, 8 ambiguous.
 > design maps 400 and 422 → **1** ("invalid input"). We keep the design; the
 > test documents both.
 >
-> **Error envelope (open question for Jeremy, found at Gate 1b):** fizzy-cli's
-> error envelope is flat, `{"ok":false,"error":"<message>","code":"<code>","hint":"…"}`
+> **Error envelope (deliberate deviation from fizzy-cli; Jeremy's decision,
+> 2026-10-27):** fizzy-cli's error envelope is flat,
+> `{"ok":false,"error":"<message>","code":"<code>","hint":"…"}`
 > (`basecamp/cli` v0.2.1 `output/envelope.go` `ErrorResponse`; codes such as
-> `not_found`, `auth_required`, `api_error`). The design's is nested,
-> `{"ok":false,"error":{"code","message","fields"}}`. The plan follows the
-> design until Jeremy decides.
+> `not_found`, `auth_required`, `api_error`). pcal keeps the design's nested
+> `{"ok":false,"error":{"code","message","fields"}}`, because it carries a
+> 422's per-field messages in `fields`.
 
 Commit: "Add output envelope, renderers, and exit codes".
 
@@ -258,10 +263,10 @@ Commit: "Add config and credential storage".
 - Responses are decoded leniently (unknown fields ignored), so a server
   addition never breaks a released binary. Only the Phase 5 golden tests are
   strict.
-- 30-second timeout for JSON requests. *(Added at Gate 1b)*: image uploads
-  (up to 10 MB) get a longer one, 5 minutes, since `http.Client.Timeout`
-  covers sending the body and 10 MB over a slow uplink takes longer than 30
-  seconds.
+- 30-second timeout for JSON requests. Image uploads (up to 10 MB) get a
+  longer one, 5 minutes (found at Gate 1b; accepted 2026-10-27), since
+  `http.Client.Timeout` covers sending the body and 10 MB over a slow uplink
+  takes longer than 30 seconds.
 - `--verbose` (hidden) logs `> METHOD URL` and `< STATUS text` to stderr like
   fizzy-cli `internal/client/client.go:195` and `:210`. (fizzy's `--verbose` is
   a visible root flag, `root.go:414`; hiding it is our choice.) Never log the
@@ -321,10 +326,10 @@ Commit: "Pin API contract with golden JSON".
   "Logged in as Admin (write)". 401 → exit 3, nothing stored. A positional
   token argument → exit 1 with the hint `echo … | pcal auth login --with-token`.
 - `internal/prompt` (huh v1.0.0: `NewInput().EchoMode(EchoModePassword)`,
-  `NewConfirm`). *(Added at Gate 1b, for accessibility)*: every form honors
-  `ACCESSIBLE` (non-empty → `form.WithAccessible(true)`, the switch huh's
-  README recommends), which swaps the redrawing TUI for plain prompts a
-  screen reader can follow. Tests drive forms the same way, with
+  `NewConfirm`). For accessibility (found at Gate 1b; accepted 2026-10-27),
+  every form honors `ACCESSIBLE` (non-empty → `form.WithAccessible(true)`,
+  the switch huh's README recommends), which swaps the redrawing TUI for
+  plain prompts a screen reader can follow. Tests drive forms the same way, with
   `WithAccessible(true)`, `WithInput`, and `WithOutput`, so prompt code is
   tested without a TTY.
 - `auth status`: URL, user, permission, and credential source (keyring / file /
@@ -626,9 +631,9 @@ Commit: "Add RSVP, token, and website-token commands".
 
 ## Phase 13 — `version`, `completion`, `skill install`, README
 
-- `version` → version, commit, date, Go version. *(Added at Gate 1b)*: a
-  `go install …@v0.1.0` build has no ldflags, so when `Version` is still
-  `dev`, fall back to `debug.ReadBuildInfo().Main.Version`.
+- `version` → version, commit, date, Go version. A `go install …@v0.1.0`
+  build has no ldflags (found at Gate 1b; accepted 2026-10-27), so when
+  `Version` is still `dev`, fall back to `debug.ReadBuildInfo().Main.Version`.
 - **Red first:** `version` output (ldflags values, and the build-info
   fallback); `completion` emits a script for each shell; `skill install`
   writes the embedded file under a temp `HOME`, and won't overwrite without
