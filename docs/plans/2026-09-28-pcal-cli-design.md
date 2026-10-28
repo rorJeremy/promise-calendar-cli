@@ -27,7 +27,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
 | Output | Tables in a TTY; fizzy-style JSON envelope when piped or `--json` |
 | Distribution | goreleaser → GitHub Releases + `rorJeremy/homebrew-tap`; `go install` and `mise use github:…` work |
-| Dev toolchain | mise (`mise.toml` pins Go, golangci-lint, goreleaser; CI uses `jdx/mise-action`) |
+| Dev toolchain | mise (`mise.toml` pins Go, golangci-lint, goreleaser; `mise.lock` pins their artifacts; CI uses `jdx/mise-action` with `MISE_LOCKED=1`) |
 
 **Out of scope (v1):** profiles/multiple servers, MCP server, TUI, self-update,
 signed releases, curl installer, breadcrumbs in the envelope.
@@ -66,13 +66,14 @@ pcal events create [--title --date --end-date --start 10am --end 12pm --all-day
                     --repeat "weekly on sun" | --rrule RAW
                     --location-name --address --map-url
                     --tag NAME... --description | --description-file F --notes
-                    --image F --image-alt --website --rsvp --draft]
+                    --image F | --image-url URL  --image-alt
+                    --website --rsvp --draft]
 pcal events update ID [same flags]
 pcal events delete ID [--yes]
 pcal events publish|unpublish ID
 pcal events website on|off ID
 pcal events rsvp on|off ID
-pcal events image set ID FILE [--alt TEXT]
+pcal events image set ID (FILE | --url URL) [--alt TEXT]   # an upload or a link; either replaces the other
 pcal events image rm ID
 
 pcal tags list | create NAME [--color] | update ID [...] | delete ID [--yes]
@@ -99,9 +100,11 @@ pcal version | completion {bash,zsh,fish} | skill install
 - `--tag` takes names and resolves them to IDs via `GET /tags`; unknown name → exit 1.
 - `events update` sends only the flags given; a flag with an empty value
   (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field.
-- Event `ID` arguments accept a UUID or a unique title prefix (the server's
-  search matches anywhere in a title, so the CLI keeps only prefix matches);
-  multiple matches → exit 8 listing candidates.
+- Event `ID` arguments accept a UUID, an exact title, or a unique title
+  prefix, all case-insensitive. An exact title wins over prefixes, so
+  `Worship` stays reachable when `Worship Night` exists. The server's search
+  matches anywhere in a title, so the CLI does this matching itself. Multiple
+  matches → exit 8 listing candidates.
 - `events list` shows occurrences: a recurring event appears once per
   occurrence, dated by the server's `occurrence_*` fields.
 - `publish`, `website on`, `rsvp on`, etc. are `PATCH /events/:id` with one field.

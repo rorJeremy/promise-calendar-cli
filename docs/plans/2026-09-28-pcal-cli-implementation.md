@@ -22,7 +22,9 @@ a flat body and can answer 429; the server validates RRULEs; `starts_at` and
 `ends_at` are stored independently of `occurs_on`, so the CLI keeps them on
 the event's dates; multipart encoding rules; the 365-occurrence expansion
 cap; RSVP `--date` is the `occurrence` param. Phase 0 now says the old Go is a
-Homebrew install.
+Homebrew install. Jeremy's Gate 1 decisions: pin the 2026-10-27 tool
+versions, created and locked with mise (`MISE_LOCKED=1` in CI); add
+`--image-url`; an exact title match wins over prefix matches.
 
 TDD throughout (`go test`, table-driven, `testify/require`). Commit once per
 phase, and run `make check` at the end of each phase.
@@ -37,7 +39,7 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
 - **Toolchain via mise** (you use mise as of 2026-09-29; the calendar app
   switched in PR #103). Phase 1 adds `mise.toml` pinning Go, goreleaser, and
   golangci-lint, so Phase 0 is just: in `~/promise-calendar-cli`, run
-  `mise install`, then `mise exec -- go version` → `go1.27.1`. Nothing comes
+  `mise install`, then `mise exec -- go version` → `go1.27.3`. Nothing comes
   from Homebrew.
 - **Retire the old Go (recommended).** `/usr/local/bin/go` is **1.17.2**, a
   Homebrew install (`/usr/local/bin/go -> ../Cellar/go/1.17.2/bin/go`; `brew
@@ -55,21 +57,39 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
 
 ## Phase 1 — Scaffold, CI, Makefile
 
-- `mise.toml` (the single source of truth for tool versions, locally and in CI):
+- `mise.toml` (the single source of truth for tool versions, locally and in
+  CI). Create it with mise rather than by hand:
+  `mise use --pin go@1.27.3 golangci-lint@2.15.0 goreleaser@2.19.0`, then add
+  the header comment:
   ```toml
   # Tool versions for pcal development, managed by mise (https://mise.jdx.dev).
-  # CI installs the same versions via jdx/mise-action.
+  # CI installs the same versions via jdx/mise-action, from mise.lock.
   [tools]
-  go = "1.27.1"
-  golangci-lint = "2.14.0"
-  goreleaser = "2.18.2"
+  go = "1.27.3"
+  golangci-lint = "2.15.0"
+  goreleaser = "2.19.0"
   ```
-  These were the latest versions on 2026-09-29 (`mise latest <tool>`). Bump
-  them deliberately. Commit it with `mise.lock` (`mise lock`) so CI resolves
-  the exact same artifacts.
+  These were the latest versions on 2026-10-27 (`mise latest <tool>`; the
+  2026-09-29 pins 1.27.1 / 2.14.0 / 2.18.2 were superseded and bumped at
+  Jeremy's request).
+- `mise.lock`: `mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64`
+  records each tool's download URL and checksum for every platform a
+  developer or CI runner uses (this Mac is `macos-x64`; GitHub's
+  `macos-latest` is arm64, `ubuntu-latest` x64). Commit both files.
+- **Every dev tool comes from mise**: no `go install` of linters, no
+  `golangci-lint-action` or `goreleaser-action`, nothing from Homebrew.
+  `mise use` also installs the three tools (into mise's own directory). Phase
+  1 needs them anyway, because its commit requires a green `mise exec -- make
+  check`. Check `mise exec -- go version` → `go1.27.3`. Any other checkout
+  just runs `mise install`. (Both `mise use --pin … --dry-run` and the
+  four-platform `mise lock --dry-run` were run on 2026-10-27 with mise
+  2026.10.20.)
+- **Bumping later:** `mise outdated` shows what's newer; `mise upgrade --bump
+  <tool>` rewrites the pin in `mise.toml`; `mise lock` refreshes `mise.lock`;
+  `mise exec -- make check`; commit both files together.
 - `go mod init github.com/rorJeremy/promise-calendar-cli`, `go 1.26`. That is
   the minimum language version for `go install` users, and it's independent
-  of the 1.27.1 toolchain mise pins for development.
+  of the 1.27.3 toolchain mise pins for development.
 - `cmd/pcal/main.go` → `os.Exit(commands.Execute())`.
 - `internal/version`: `Version`, `Commit`, `Date` vars (set via ldflags, as in
   basecamp-cli `.goreleaser.yaml` → `internal/version.Version`), plus
@@ -85,7 +105,9 @@ References were checked against shallow clones of `basecamp/fizzy-cli` and
 - `.github/workflows/test.yml`: matrix `ubuntu-latest`, `macos-latest`;
   `actions/checkout` → `jdx/mise-action` (installs go, golangci-lint, and
   goreleaser from `mise.toml`, with caching) → `make check`. Env
-  `PCAL_NO_KEYRING=1` (basecamp-cli sets `BASECAMP_NO_KEYRING` in CI).
+  `PCAL_NO_KEYRING=1` (basecamp-cli sets `BASECAMP_NO_KEYRING` in CI) and
+  `MISE_LOCKED=1`, so CI installs only the URLs and checksums in `mise.lock`
+  and fails instead of resolving anything new.
   This deviates from basecamp-cli, which uses `actions/setup-go` +
   `golangci-lint-action` with versions pinned in the workflow. With mise, local
   and CI versions can't drift. The calendar app kept `ruby/setup-ruby` in CI
@@ -357,10 +379,19 @@ Commit: "Add tags commands".
   `recurrence_text` is shown when present.
 - **ID resolution** (`internal/commands/resolve.go`): a UUID passes through.
   Otherwise fetch `GET /events?q=<arg>&start=<today-1y>&end=<today+2y>`,
-  dedupe by id, then keep only titles that **start with** the argument
-  (case-insensitive), because `q` matches anywhere. 0 → exit 2 with the hint
-  "use the event's ID (`pcal events list --search …` shows it)", >1 → exit 8
-  listing the candidates (id, title, first date).
+  dedupe by id, then match case-insensitively, in this order (`q` matches
+  anywhere, so the CLI does its own matching):
+  1. **Exact title** wins. One event titled exactly the argument → that
+     event, even if other titles start with it (so "Worship" still finds
+     `Worship` when `Worship Night` exists). Two or more with that exact
+     title → exit 8.
+  2. Otherwise, titles that **start with** the argument: one → that event,
+     several → exit 8.
+  3. None → exit 2 with the hint "use the event's ID (`pcal events list
+     --search …` shows it)".
+
+  Exit 8 lists the candidates (id, title, first date). Red: a table test for
+  each case, including exact-beats-prefix and duplicate exact titles.
   *Limitations:* events wholly outside that window need the UUID. The list
   endpoint is occurrence-based, and a wider window costs expansion time on the
   server. The server also stops expanding a series after **365 occurrences
@@ -389,6 +420,7 @@ Commit: "Add events list and show".
   | `--description`, `--description-file` | `description` |
   | `--notes` | `internal_notes` |
   | `--image F`, `--image-alt` | `featured_image` (multipart), `image_alt` |
+  | `--image-url URL` | `image_url` (a linked image; HTTPS only, else 422) |
   | `--website`, `--rsvp`, `--draft` | `show_on_website: true`, `rsvp_enabled: true`, `published: false` |
 
   The booleans are always sent as JSON `true`/`false` (null is a 422). On
@@ -419,8 +451,15 @@ Commit: "Add events list and show".
 - `delete ID [--yes]` → 204.
 - `publish|unpublish`, `website on|off`, `rsvp on|off` → a one-field `PATCH`
   (`published`, `show_on_website`, `rsvp_enabled`).
+- **`--image-url` (added at Gate 1, Jeremy's call).** An event has either an
+  upload or a link, never both, and setting one replaces the other
+  (`Event#enforce_image_mutual_exclusivity`). `--image` with `--image-url` →
+  exit 1. A link is a plain JSON field, so no multipart. The old alt text
+  stays unless `--image-alt` is sent.
 - `image set ID FILE [--alt]` → multipart `PATCH` (`event[featured_image]`,
-  `event[image_alt]`). A new upload replaces a linked `image_url`. `image rm
+  `event[image_alt]`). `image set ID --url URL [--alt]` → JSON `PATCH`
+  (`image_url`, `image_alt`). Exactly one of FILE and `--url` → else exit 1.
+  A new upload replaces a linked `image_url` and vice versa. `image rm
   ID` → `DELETE /events/:id/image`: 204 even when there's no image; 422 (exit
   1, fields shown) if the event is otherwise invalid, in which case nothing is
   removed.
@@ -428,8 +467,9 @@ Commit: "Add events list and show".
   first, so this only happens if a tag is deleted mid-command.
 - Red: request-body assertions for each, including the nested `event` key,
   `tag_ids` resolution, RFC 3339 times on the right dates (create, and update
-  moving a timed event), the multipart encoding, and RRULE. 403 with a read
-  token → exit 4.
+  moving a timed event), the multipart encoding, `image_url` as JSON (and
+  `--image` + `--image-url` → exit 1), and RRULE. 403 with a read token →
+  exit 4.
 
 Commit: "Add event write commands".
 
@@ -520,7 +560,8 @@ homebrew_casks:
 - `.github/workflows/release.yml`: on `v*` tags → checkout (`fetch-depth: 0`)
   → `jdx/mise-action` → `make check` → `goreleaser release --clean` (the
   mise-pinned goreleaser, instead of `goreleaser/goreleaser-action`), with env
-  `GITHUB_TOKEN` + `HOMEBREW_TAP_TOKEN`. Permissions: `contents: write`.
+  `GITHUB_TOKEN` + `HOMEBREW_TAP_TOKEN`, and `MISE_LOCKED=1` as in
+  `test.yml`. Permissions: `contents: write`.
 - Local checks: `mise exec -- goreleaser check`,
   `mise exec -- goreleaser release --snapshot --clean`, and run
   `dist/pcal_darwin_*/pcal version`.
