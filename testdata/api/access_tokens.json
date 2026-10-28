@@ -1,0 +1,16 @@
+[
+  {
+    "id": "7d77b710-5077-53cc-989f-2c5a80c23721",
+    "description": "read-only script",
+    "permission": "read",
+    "last_used_at": null,
+    "created_at": "2099-09-02T09:00:00.000-05:00"
+  },
+  {
+    "id": "757d81e9-9bb3-50c6-99d9-5b659f726b0d",
+    "description": "pcal on test-mac",
+    "permission": "write",
+    "last_used_at": "2099-10-20T14:30:00.000-05:00",
+    "created_at": "2099-09-01T09:00:00.000-05:00"
+  }
+]

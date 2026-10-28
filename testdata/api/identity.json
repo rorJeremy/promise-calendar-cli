@@ -1,0 +1,7 @@
+{
+  "id": "ae6c10d0-0b13-554c-b976-a05d8a18f0cc",
+  "name": "Admin User",
+  "email_address": "admin@example.com",
+  "permission": "write",
+  "time_zone": "America/Chicago"
+}

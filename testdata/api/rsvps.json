@@ -1,0 +1,18 @@
+[
+  {
+    "id": "f2c7df45-caa5-5dd7-98e0-d403e01cdf6d",
+    "name": "Sam Lee",
+    "email": "sam@example.com",
+    "phone": null,
+    "occurrence_date": "2099-11-01",
+    "created_at": "2099-09-03T09:00:00.000-05:00"
+  },
+  {
+    "id": "c5083d3e-ac91-585c-b6a4-10063966d83a",
+    "name": "Maria Garcia",
+    "email": "maria@example.com",
+    "phone": "555-010-0100",
+    "occurrence_date": "2099-10-25",
+    "created_at": "2099-09-02T09:00:00.000-05:00"
+  }
+]
