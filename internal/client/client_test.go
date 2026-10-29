@@ -197,10 +197,12 @@ func TestSuccessBodyThatIsNotJSON(t *testing.T) {
 	require.Equal(t, output.ExitAPI, e.ExitCode())
 }
 
-// TestStatusErrors pins the exit code for every status, decided by status
-// alone. The body's error string is shown, and only words the message for
-// read_only_token.
+// TestStatusErrors pins the exit code and hint for every status, decided
+// by status alone. The body's error string is shown, and only words the
+// message for read_only_token.
 func TestStatusErrors(t *testing.T) {
+	const serverHint = "The calendar had a problem. Try again later, or report it."
+
 	tests := []struct {
 		name     string
 		status   int
@@ -213,21 +215,21 @@ func TestStatusErrors(t *testing.T) {
 	}{
 		{"400 from the app", 400, `{"error":"invalid_date"}`, nil, output.CodeInvalidInput, 1, "invalid_date", ""},
 		{"400 from Rails", 400, `{"status":400,"error":"Bad Request"}`, nil, output.CodeInvalidInput, 1, "Bad Request", ""},
-		{"401", 401, `{"error":"unauthorized"}`, map[string]string{"WWW-Authenticate": `Token realm="Application"`}, output.CodeAuth, 3, "unauthorized", "pcal login"},
-		{"403 read-only token", 403, `{"error":"read_only_token"}`, nil, output.CodeForbidden, 4, "token is read-only", "pcal login"},
+		{"401", 401, `{"error":"unauthorized"}`, map[string]string{"WWW-Authenticate": `Token realm="Application"`}, output.CodeAuth, 3, "unauthorized", "Run `pcal login`."},
+		{"403 read-only token", 403, `{"error":"read_only_token"}`, nil, output.CodeForbidden, 4, "token is read-only", "Run `pcal login` (without --read-only) for a token that can make changes."},
 		{"403 for another reason", 403, `{"error":"forbidden"}`, nil, output.CodeForbidden, 4, "forbidden", ""},
 		{"404 from the app", 404, `{"error":"not_found"}`, nil, output.CodeNotFound, 2, "not_found", ""},
 		{"404 from Rails (no such route)", 404, `{"status":404,"error":"Not Found"}`, nil, output.CodeNotFound, 2, "Not Found", ""},
 		{"406 from Rails", 406, `{"status":406,"error":"Not Acceptable"}`, nil, output.CodeAPI, 7, "Not Acceptable", ""},
 		{"406 with an empty body", 406, "", nil, output.CodeAPI, 7, "Not Acceptable", ""},
 		{"422", 422, `{"errors":{"title":["can't be blank"],"occurs_on":["can't be blank"]}}`, nil, output.CodeValidation, 1, "Title can't be blank", ""},
-		{"429", 429, `{"error":"rate_limited"}`, nil, output.CodeRateLimit, 5, "rate_limited", "Wait"},
-		{"500 from Rails", 500, `{"status":500,"error":"Internal Server Error"}`, nil, output.CodeAPI, 7, "Internal Server Error", "Try again later"},
-		{"502 from a proxy, not JSON", 502, "<html><body>Bad Gateway</body></html>", nil, output.CodeAPI, 7, "Bad Gateway", "Try again later"},
-		{"503 with an empty body", 503, "", nil, output.CodeAPI, 7, "Service Unavailable", "Try again later"},
+		{"429", 429, `{"error":"rate_limited"}`, nil, output.CodeRateLimit, 5, "rate_limited", "Wait a minute, then try again."},
+		{"500 from Rails", 500, `{"status":500,"error":"Internal Server Error"}`, nil, output.CodeAPI, 7, "Internal Server Error", serverHint},
+		{"502 from a proxy, not JSON", 502, "<html><body>Bad Gateway</body></html>", nil, output.CodeAPI, 7, "Bad Gateway", serverHint},
+		{"503 with an empty body", 503, "", nil, output.CodeAPI, 7, "Service Unavailable", serverHint},
 		// Redirects aren't followed: a 301 or 302 would turn a POST into a
 		// GET, and the app never redirects a JSON request it accepts.
-		{"302", 302, "", map[string]string{"Location": "/session/new"}, output.CodeAPI, 7, "the server redirected to /session/new", "--url"},
+		{"302", 302, "", map[string]string{"Location": "/session/new"}, output.CodeAPI, 7, "the server redirected to /session/new", "Check the calendar URL (--url or PCAL_URL)."},
 	}
 
 	for _, tt := range tests {
@@ -238,7 +240,7 @@ func TestStatusErrors(t *testing.T) {
 
 			e := requireError(t, err, tt.wantCode, tt.wantMsg)
 			require.Equal(t, tt.wantExit, e.ExitCode())
-			require.Contains(t, e.Hint, tt.wantHint)
+			require.Equal(t, tt.wantHint, e.Hint)
 		})
 	}
 }
@@ -257,16 +259,14 @@ func TestValidationErrors(t *testing.T) {
 			wantFields: map[string][]string{"title": {"can't be blank"}, "occurs_on": {"can't be blank"}},
 		},
 		{
-			// Eight fields in reverse alphabetical order. Ranging over a Go
-			// map picks "url" first only one run in eight (measured: a
-			// map-ranging mutant failed 175 of 200 runs);
-			// TestDecodeValidationKeepsBodyOrder is the exact check.
+			// One check of twelve fields over HTTP. Map order could still
+			// pass it by chance; TestValidationKeepsBodyOrder can't be.
 			name:    "the message comes from the first field in body order",
-			body:    `{"errors":{"url":["a"],"title":["b"],"tag_ids":["c"],"starts_at":["d"],"occurs_on":["e"],"name":["f"],"ends_on":["g"],"color":["h"]}}`,
+			body:    twelveFields,
 			wantMsg: "Url a",
 			wantFields: map[string][]string{
-				"url": {"a"}, "title": {"b"}, "tag_ids": {"c"}, "starts_at": {"d"},
-				"occurs_on": {"e"}, "name": {"f"}, "ends_on": {"g"}, "color": {"h"},
+				"url": {"a"}, "title": {"b"}, "tag_ids": {"c"}, "starts_at": {"d"}, "recurrence_rule": {"e"}, "phone": {"f"},
+				"occurs_on": {"g"}, "name": {"h"}, "location_name": {"i"}, "image_url": {"j"}, "ends_on": {"k"}, "color": {"l"},
 			},
 		},
 		{
@@ -308,13 +308,26 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
-func TestDecodeValidationKeepsBodyOrder(t *testing.T) {
-	body := `{"errors":{"url":["a"],"title":["b"],"tag_ids":["c"],"starts_at":["d"],"occurs_on":["e"],"name":["f"],"ends_on":["g"],"color":["h"]}}`
+// twelveFields is a 422 body whose fields are in reverse alphabetical
+// order, so the first in body order ("url") is last alphabetically.
+const twelveFields = `{"errors":{"url":["a"],"title":["b"],"tag_ids":["c"],"starts_at":["d"],"recurrence_rule":["e"],"phone":["f"],` +
+	`"occurs_on":["g"],"name":["h"],"location_name":["i"],"image_url":["j"],"ends_on":["k"],"color":["l"]}}`
 
-	order, _, err := decodeValidation([]byte(body))
+// TestValidationKeepsBodyOrder pins that the message comes from the first
+// field in body order. A Go map's range order is random, and a pick in map
+// order still names "url" first in about one run in seven with twelve
+// fields (measured: a mutant ranging over the map passed 28 of 200 runs).
+// Each validationError call decodes a new map, so 100 calls leave no room
+// for luck.
+func TestValidationKeepsBodyOrder(t *testing.T) {
+	order, _, err := decodeValidation([]byte(twelveFields))
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"url", "title", "tag_ids", "starts_at", "occurs_on", "name", "ends_on", "color"}, order)
+	require.Equal(t, []string{"url", "title", "tag_ids", "starts_at", "recurrence_rule", "phone",
+		"occurs_on", "name", "location_name", "image_url", "ends_on", "color"}, order)
+	for range 100 {
+		require.Equal(t, "Url a", validationError([]byte(twelveFields)).Message)
+	}
 }
 
 func TestDecodeValidationRejectsOtherShapes(t *testing.T) {
@@ -350,31 +363,45 @@ func TestValidationErrorWithAnUnexpectedBody(t *testing.T) {
 	}
 }
 
-// TestHumanize pins attribute names to Rails' full_messages, checked by
-// running activemodel 8.1.4 on each name (the app has no locale overrides
-// or inflection acronyms).
+// TestHumanize pins attribute names to Rails' full_messages: each want is
+// what activemodel 8.1.4's full_messages printed for errors.add(attr,
+// "is bad") (the app has no locale overrides or inflection acronyms).
 func TestHumanize(t *testing.T) {
 	tests := []struct{ attr, want string }{
-		{"title", "Title"},
-		{"occurs_on", "Occurs on"},
-		{"tag_ids", "Tag ids"},
-		{"image_url", "Image url"},
-		{"featured_image", "Featured image"},
-		{"event", "Event"},
-		{"occurrence_date", "Occurrence date"},
-		{"recurrence_rule", "Recurrence rule"},
-		{"ends_on", "Ends on"},
-		{"location.name", "Location name"},
-		{"event_id", "Event"},
-		{"location_map_url", "Location map url"},
+		{"title", "Title is bad"},
+		{"occurs_on", "Occurs on is bad"},
+		{"tag_ids", "Tag ids is bad"},
+		{"image_url", "Image url is bad"},
+		{"featured_image", "Featured image is bad"},
+		{"event", "Event is bad"},
+		{"occurrence_date", "Occurrence date is bad"},
+		{"recurrence_rule", "Recurrence rule is bad"},
+		{"ends_on", "Ends on is bad"},
+		{"location.name", "Location name is bad"},
+		{"event_id", "Event is bad"},
+		{"location_map_url", "Location map url is bad"},
+		{"base", "is bad"},
+		{"location.base", "Location is bad"},
+		{"a.b.base", "A b is bad"},
+		{"items[0].name", "Items[0] name is bad"},
+		{"_id", "Id is bad"},
+		{"id", "Id is bad"},
+		{"event_ID", "Event id is bad"},
+		{"url", "Url is bad"},
+		{"starts_at", "Starts at is bad"},
+		{"ends_at", "Ends at is bad"},
+		{"color", "Color is bad"},
+		{"name", "Name is bad"},
+		{"email", "Email is bad"},
+		{"phone", "Phone is bad"},
+		{"description", "Description is bad"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.attr, func(t *testing.T) {
-			require.Equal(t, tt.want+" is bad", fullMessage(tt.attr, "is bad"))
+			require.Equal(t, tt.want, fullMessage(tt.attr, "is bad"))
 		})
 	}
-	require.Equal(t, "is bad", fullMessage("base", "is bad"))
 }
 
 func TestNetworkError(t *testing.T) {

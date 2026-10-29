@@ -126,6 +126,10 @@ func TestResolveURL(t *testing.T) {
 		{name: "another scheme is rejected", flag: "ftp://calendar.promisechurch.io", wantErr: "invalid calendar URL"},
 		{name: "a missing host is rejected", flag: "https://", wantErr: "invalid calendar URL"},
 		{name: "a query is rejected", flag: "https://calendar.promisechurch.io/?x=1", wantErr: "invalid calendar URL"},
+		// A password in the URL would end up in config.json and shell history.
+		{name: "a user name and password are rejected", flag: "https://admin:secret@calendar.promisechurch.io", wantErr: `invalid calendar URL "https://admin:secret@calendar.promisechurch.io"`},
+		{name: "a user name alone is rejected", flag: "https://admin@calendar.promisechurch.io", wantErr: "invalid calendar URL"},
+		{name: "a fragment is rejected", flag: "https://calendar.promisechurch.io/#events", wantErr: "invalid calendar URL"},
 		{name: "an invalid PCAL_URL is rejected", vars: map[string]string{"PCAL_URL": "nope"}, wantErr: "invalid calendar URL"},
 		// http would send the token unencrypted: loopback only.
 		{name: "http to a public host is rejected", flag: "http://calendar.promisechurch.io", wantErr: `invalid calendar URL "http://calendar.promisechurch.io": http would send your token unencrypted, so pcal allows it only for localhost, 127.0.0.0/8, and ::1; use https`},
