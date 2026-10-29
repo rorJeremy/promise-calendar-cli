@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/gofrs/flock v0.13.1
 	github.com/itchyny/gojq v0.12.19
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2

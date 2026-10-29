@@ -3,10 +3,18 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rorJeremy/promise-calendar-cli/internal/auth"
+	"github.com/rorJeremy/promise-calendar-cli/internal/output"
 )
 
 // result is what one in-process pcal run produced.
@@ -135,4 +143,118 @@ func TestUsageErrorInTerminal(t *testing.T) {
 	require.Equal(t, 1, r.code)
 	require.Empty(t, r.stdout)
 	require.Equal(t, "Error: unknown command \"frobnicate\" for \"pcal\"\nRun `pcal --help` for usage.\n", r.stderr)
+}
+
+// runWithSubcommand runs pcal in-process with sub added to the command
+// tree, as Gate 3's commands will be, its stdout a pipe.
+func runWithSubcommand(t *testing.T, sub *cobra.Command, args ...string) result {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}}
+	root := newRootCmd(a)
+	root.AddCommand(sub)
+	code := execute(a, root, args)
+	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// TestErrorClassification pins which errors are usage errors: only cobra's
+// own (flags, arguments, required flags). An error pcal's code returns keeps
+// its own code, and a plain one is an API error (exit 7) with no help hint.
+func TestErrorClassification(t *testing.T) {
+	loggedOut := auth.NewStore(t.TempDir(), func(key string) string {
+		if key == "PCAL_NO_KEYRING" {
+			return "1"
+		}
+		return ""
+	}, io.Discard)
+	runE := func(err error) func(*cobra.Command, []string) error {
+		return func(*cobra.Command, []string) error { return err }
+	}
+
+	tests := []struct {
+		name     string
+		sub      *cobra.Command
+		args     []string
+		wantExit int
+		wantCode string
+		wantMsg  string
+		wantHint string
+	}{
+		{
+			name:     "a plain error from RunE is an API error",
+			sub:      &cobra.Command{Use: "whoami", RunE: runE(errors.New("reading config.json: unexpected end of JSON input"))},
+			args:     []string{"whoami"},
+			wantExit: 7, wantCode: "api_error", wantMsg: "reading config.json: unexpected end of JSON input",
+		},
+		{
+			name: "not logged in is an auth error",
+			sub: &cobra.Command{Use: "whoami", RunE: func(*cobra.Command, []string) error {
+				_, err := loggedOut.Resolve("https://calendar.promisechurch.io")
+				return err
+			}},
+			args:     []string{"whoami"},
+			wantExit: 3, wantCode: "auth_required", wantMsg: "not logged in", wantHint: "Run `pcal login`.",
+		},
+		{
+			name:     "a plain error from PreRunE is an API error",
+			sub:      &cobra.Command{Use: "whoami", PreRunE: runE(errors.New("boom")), RunE: runE(nil)},
+			args:     []string{"whoami"},
+			wantExit: 7, wantCode: "api_error", wantMsg: "boom",
+		},
+		{
+			name:     "a wrapped *output.Error keeps its code",
+			sub:      &cobra.Command{Use: "whoami", RunE: runE(fmt.Errorf("loading: %w", &output.Error{Code: output.CodeNotFound, Message: "not_found"}))},
+			args:     []string{"whoami"},
+			wantExit: 2, wantCode: "not_found", wantMsg: "not_found",
+		},
+		{
+			name:     "an unknown flag is a usage error",
+			sub:      &cobra.Command{Use: "whoami", RunE: runE(nil)},
+			args:     []string{"whoami", "--frobnicate"},
+			wantExit: 1, wantCode: "usage", wantMsg: "unknown flag: --frobnicate", wantHint: "Run `pcal whoami --help` for usage.",
+		},
+		{
+			name:     "an extra argument is a usage error",
+			sub:      &cobra.Command{Use: "whoami", Args: cobra.NoArgs, RunE: runE(nil)},
+			args:     []string{"whoami", "extra"},
+			wantExit: 1, wantCode: "usage", wantMsg: `unknown command "extra" for "pcal whoami"`, wantHint: "Run `pcal whoami --help` for usage.",
+		},
+		{
+			name: "a missing required flag is a usage error",
+			sub: func() *cobra.Command {
+				c := &cobra.Command{Use: "whoami", RunE: runE(nil)}
+				c.Flags().String("name", "", "")
+				_ = c.MarkFlagRequired("name")
+				return c
+			}(),
+			args:     []string{"whoami"},
+			wantExit: 1, wantCode: "usage", wantMsg: `required flag(s) "name" not set`, wantHint: "Run `pcal whoami --help` for usage.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runWithSubcommand(t, tt.sub, tt.args...)
+
+			require.Equal(t, tt.wantExit, r.code, "stdout: %s", r.stdout)
+			env := decodeError(t, r.stdout)
+			require.Equal(t, tt.wantCode, env.Error.Code)
+			require.Equal(t, tt.wantMsg, env.Error.Message)
+			require.Equal(t, tt.wantHint, env.Error.Hint)
+		})
+	}
+}
+
+// With no arguments, pcal shows help. cobra reads the process's own
+// arguments when it's given nil, so Run must never pass it nil: here the
+// "process" was started with a stray word.
+func TestRunWithNilArgsIgnoresTheProcessArguments(t *testing.T) {
+	saved := os.Args
+	t.Cleanup(func() { os.Args = saved })
+	os.Args = []string{"pcal.test", "frobnicate"}
+
+	r := runPcal(t)
+
+	require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
+	require.Contains(t, r.stdout, "Usage:")
 }

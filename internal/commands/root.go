@@ -66,11 +66,22 @@ func isTerminal(f *os.File) bool {
 // exit code. Every run builds a fresh command tree, so runs share no state.
 func Run(args []string, streams Streams) int {
 	a := &app{streams: streams}
-	root := newRootCmd(a)
+	return execute(a, newRootCmd(a), args)
+}
+
+// execute runs root, which newRootCmd built for a, with args and returns
+// the exit code. Tests call it with throwaway subcommands added to root.
+func execute(a *app, root *cobra.Command, args []string) int {
+	// Given nil, cobra parses the process's own arguments (os.Args[1:]),
+	// which in a test are the test binary's.
+	if args == nil {
+		args = []string{}
+	}
+	typeOwnErrors(root)
 	root.SetArgs(args)
-	root.SetIn(streams.In)
-	root.SetOut(streams.Out)
-	root.SetErr(streams.Err)
+	root.SetIn(a.streams.In)
+	root.SetOut(a.streams.Out)
+	root.SetErr(a.streams.Err)
 
 	cmd, err := root.ExecuteC()
 	if err == nil {
@@ -79,14 +90,42 @@ func Run(args []string, streams Streams) int {
 
 	var e *output.Error
 	if !errors.As(err, &e) {
-		// Errors that aren't pcal's own come from cobra: an unknown command
-		// or flag, or the wrong number of arguments.
+		// typeOwnErrors made every error pcal's own code returns an
+		// *output.Error, so this one is cobra's: an unknown command or
+		// flag, the wrong arguments, or a missing required flag.
 		e = &output.Error{Code: output.CodeUsage, Message: err.Error(), Cause: err}
 		if cmd != nil {
 			e.Hint = fmt.Sprintf("Run `%s --help` for usage.", cmd.CommandPath())
 		}
 	}
 	return a.errorPrinter().PrintError(e)
+}
+
+// typeOwnErrors wraps the error-returning hooks and RunE of cmd and every
+// command under it, so an error pcal's own code returns is always an
+// *output.Error: a plain one becomes an API error (exit 7, no help hint)
+// through output.AsError. Any other error execute sees is then cobra's own,
+// a usage error. Args validators aren't wrapped: their errors are usage
+// errors. Nor are the help and completion commands cobra adds while it
+// executes; their errors are cobra's too.
+func typeOwnErrors(cmd *cobra.Command) {
+	for _, hook := range []*func(*cobra.Command, []string) error{
+		&cmd.PersistentPreRunE, &cmd.PreRunE, &cmd.RunE, &cmd.PostRunE, &cmd.PersistentPostRunE,
+	} {
+		run := *hook
+		if run == nil {
+			continue
+		}
+		*hook = func(c *cobra.Command, args []string) error {
+			if err := run(c, args); err != nil {
+				return output.AsError(err)
+			}
+			return nil
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		typeOwnErrors(sub)
+	}
 }
 
 // outputOptions maps the parsed flags and the environment to output options.
