@@ -523,13 +523,18 @@ Commit: "Add token login, status, whoami, logout".
 
 ## Phase 7 — `pcal login` (browser, PKCE)
 
+`pcal login` and `pcal auth login` are one command (Gate 3, as
+basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
+`--with-token`, which can't be combined with the browser flags (exit 1).
+
 `internal/auth/browser.go`:
 - Listen on `127.0.0.1:0`. Generate 32 random bytes each for `state` and the
-  verifier (base64url, 43 chars). `challenge = base64url(sha256(verifier))`.
+  verifier (base64url, 43 chars). `challenge = base64url(sha256(verifier))`
+  (pinned with RFC 7636 Appendix B's example).
 - Open `<base>/cli/authorization/new?port&state&code_challenge&device=<hostname>&permission=<write|read>`
   with `open` / `xdg-open` / `rundll32 url.dll,FileProtocolHandler` (basecamp-cli
-  `auth.go#openBrowser` delegates to a host util the same way). **Always print
-  the URL too.**
+  `hostutil.OpenBrowser`, with `.Start()`, so only a failure to launch the
+  opener counts). **Always print the URL too.**
 - The server rejects bad parameters with a 400 **page**, never a redirect, so
   the CLI would just wait out its timeout. Send only valid ones
   (`Cli::AuthorizationsController#valid_request?`): `port` 4–5 digits in
@@ -543,31 +548,50 @@ Commit: "Add token login, status, whoami, logout".
   `A-Za-z0-9-._~`). If
   `os.Hostname()` fails or is blank, send `device=unknown host`. The server
   truncates `device` to 60 characters and names the token "pcal on <device>".
-- Handle `/callback`: state mismatch → 400 page + error. `error=access_denied`
-  → exit 3 "Authorization denied". Success page: "You can close this tab".
-  Timeout after 5 minutes → exit 3. Only the first callback is accepted.
+- Handle `/callback`: the first request decides (later ones get an "already
+  finished" page and change nothing; other paths are 404s that don't end the
+  wait). The state is checked first: a mismatch → 400 page and exit 3 "the
+  browser's answer didn't match this login" (the expected state is never
+  printed). `error=access_denied` → exit 3 "authorization denied in the
+  browser". No code → exit 3. Success page: "You can close this tab". The
+  page is written before pcal acts on the answer, and the server shuts down
+  gracefully, so the browser always gets it. Timeout after 5 minutes → exit
+  3, "timed out waiting for you to approve pcal in the browser".
 - `POST /cli/token` with a **flat** JSON body `{"code","code_verifier"}` → 201
   `{token, permission, user{id,name}}` → store → `/my/identity` → "Logged in
   as <name> (<permission>)".
   - 400 `invalid_grant` (unknown, expired, reused, or wrong verifier; every
-    attempt consumes the code) → exit 3 "That login code expired or was
-    already used. Run `pcal login` again."
-  - 429 `rate_limited` (more than 10 a minute from one IP) → exit 5 "Too many
-    login attempts. Wait a minute, then run `pcal login` again." No automatic
-    retry.
+    attempt consumes the code) → exit 3 "that login code expired or was
+    already used", hint "Run `pcal login` again."
+  - 429 `rate_limited` (more than 10 a minute from one IP) → exit 5 "too
+    many login attempts", hint "Wait a minute, then run `pcal login` again."
+    No automatic retry.
 - `--read-only` → `permission=read`. `--url` overrides the base.
-- The stored credential has source `browser`.
+- The stored credential has source `browser`, and it replaces a token an
+  earlier `pcal login` minted, which is revoked (Gate 3).
+- `PCAL_TOKEN` set → exit 1 before anything opens (Gate 3). Ctrl-C while
+  waiting for the browser or the pasted address → exit 130, nothing stored
+  (Gate 3). Listening for Ctrl-C stops just before the token is stored.
+- Messages (the link, "Opening your browser…", the wait) go to stderr, so
+  `pcal login --json` still ends with an envelope on stdout (basecamp-cli
+  prints them on stdout and refuses `--json`).
 - **Headless / paste fallback** (basecamp-cli `LoginOptions.defaults`,
   `hostutil.HeadlessReason`, `readCallbackInput`): `internal/auth/host.go`
-  `HeadlessReason()` → `"SSH session"` (`SSH_CONNECTION`/`SSH_CLIENT`/`SSH_TTY`),
-  `"CI environment"` (`CI` truthy), `"no display"` (Unix without
-  `DISPLAY`/`WAYLAND_DISPLAY`), or `""`.
+  `HeadlessReason(getenv, goos)` → `"SSH session"` (`SSH_CONNECTION`/`SSH_CLIENT`/`SSH_TTY`),
+  `"CI environment"` (`CI` is 1, true, yes, or on), `"no display"` (Linux,
+  the BSDs, Solaris, or illumos without `DISPLAY`/`WAYLAND_DISPLAY`; never
+  macOS or Windows, which have no display variable), or `""`.
   - Remote mode (auto when headless, or `--remote`; `--local` wins over the
     detection; `--remote` + `--local` → exit 1): don't open a browser. Print
     "Not opening a browser here (SSH session). Open this link on any device:"
     plus the URL, then prompt "Paste the address your browser ended up on:".
-    Parse `code`/`state` (or `error`) from the pasted URL, require a matching
-    state, and exchange as usual. The prompt waits up to 5 minutes, matching the
+    The link's port is one that was free on 127.0.0.1; nothing listens
+    there, so the browser's redirect fails and leaves the code in the
+    address bar. Parse `code`/`state` (or `error`) from the pasted URL, or
+    just its query, with spaces or quotes around it, require a matching
+    state (exit 3 otherwise), and exchange as usual. The prompt is a plain
+    line read on stdin, not huh (huh's accessible mode has no timeouts, and
+    its drawn form hangs at EOF), and waits up to 5 minutes, matching the
     server's code lifetime.
   - `--no-browser`: keep the local listener but don't launch a browser; just
     print the link.
@@ -581,6 +605,13 @@ state mismatch; access_denied; timeout (injected short duration);
 injectable func. Paste mode: the URL is parsed (success, `error=access_denied`,
 wrong state, garbage input → re-prompt once, then exit 1). `HeadlessReason`
 table test with an injected env and GOOS. `--local` overrides the detection.
+The fake calendar's authorization page checks the parameters as the app
+does, issues a single-use code for the challenge, and redirects to the
+callback; its `POST /cli/token` checks the verifier against that challenge.
+A fake browser follows the redirect; for `--no-browser`, a failed launch,
+and the paste flow, a stderr hook plays the person, opening the printed
+link (on another device for the paste flow, pasting the address the
+calendar redirected to).
 
 Commit: "Add browser login".
 

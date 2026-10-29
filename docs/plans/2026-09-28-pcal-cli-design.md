@@ -62,8 +62,9 @@ Makefile
 
 ```
 pcal login [--read-only] [--url URL] [--remote | --local] [--no-browser]
+pcal login --with-token                       # token read from stdin, never an argument
 pcal logout                                   # revokes a login-minted token, then forgets it locally
-pcal auth login --with-token  |  auth status  # token read from stdin, never an argument
+pcal auth login | logout | status             # auth login/logout are pcal login/logout
 pcal whoami
 
 pcal events list [--from D --to D --tag NAME... --search Q --unpublished --website]
@@ -129,6 +130,12 @@ pcal version | completion {bash,zsh,fish} | skill install
    Handle `error=access_denied`. Serve a small "You can close this tab" page.
 4. `POST /cli/token {code, code_verifier}` → token. Store it, call
    `/my/identity`, print "Logged in as <name> (write)".
+
+Ctrl-C while a login waits (for the browser, a pasted address, or the
+masked `--with-token` prompt) cancels it: "Login canceled. Nothing was
+stored." and exit 130, without the JSON envelope, as basecamp-cli's login
+does (Jeremy's Gate 3 decision). Messages go to stderr, so the result on
+stdout can still be JSON.
 
 **Headless fallback** (as in basecamp-cli, `LoginOptions.defaults` +
 `readCallbackInput`): on an SSH session, with `CI` set, or on Unix without
@@ -228,6 +235,7 @@ exit code.
 | 6 | Network |
 | 7 | API / server error (5xx, unexpected) |
 | 8 | Ambiguous title match |
+| 130 | Canceled with Ctrl-C during a login (128 + SIGINT, as basecamp-cli; no envelope) |
 
 ## Testing
 

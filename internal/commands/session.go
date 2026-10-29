@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/rorJeremy/promise-calendar-cli/internal/auth"
 	"github.com/rorJeremy/promise-calendar-cli/internal/client"
@@ -167,4 +168,17 @@ func (a *app) interruptible(ctx context.Context) (context.Context, context.Cance
 // prompter returns a Prompter that reads stdin and draws on stderr.
 func (a *app) prompter() prompt.Prompter {
 	return prompt.New(a.streams.In, a.streams.Err, a.getenv)
+}
+
+// describeWait says how long d is, for "up to 5 minutes": whole minutes
+// in words, anything else as Go writes it.
+func describeWait(d time.Duration) string {
+	switch {
+	case d == time.Minute:
+		return "1 minute"
+	case d > time.Minute && d%time.Minute == 0:
+		return fmt.Sprintf("%d minutes", d/time.Minute)
+	default:
+		return d.String()
+	}
 }

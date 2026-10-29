@@ -269,7 +269,7 @@ func TestLoginReplacingAStoredToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cal := newFakeCalendar(t)
-			cal.route("DELETE /my/current_access_token", cal.withToken("pcal_old", func(w http.ResponseWriter, _ *http.Request) {
+			cal.route("DELETE /my/current_access_token", cal.withToken([]string{"pcal_old"}, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			h := newHarness(t, cal.URL())
@@ -325,19 +325,6 @@ func TestWarningsShowControlCharactersAsEscapes(t *testing.T) {
 	require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
 	require.Contains(t, r.stderr, `(\x1b]0;pwned\a)`)
 	require.NotContains(t, r.stderr, "\x1b")
-}
-
-// Until Phase 7 adds the browser login, `auth login` needs --with-token.
-func TestAuthLoginNeedsWithTokenForNow(t *testing.T) {
-	cal := newFakeCalendar(t)
-	h := newHarness(t, cal.URL())
-
-	r := h.run("auth", "login")
-
-	require.Equal(t, 1, r.code, "stdout: %s", r.stdout)
-	env := decodeError(t, r.stdout)
-	require.Equal(t, "usage", env.Error.Code)
-	require.Equal(t, "browser login isn't available yet; pipe a token to `pcal auth login --with-token`", env.Error.Message)
 }
 
 // --- auth status ---

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -63,6 +64,17 @@ type app struct {
 	interrupt func(context.Context) (context.Context, context.CancelFunc)
 	// clientOptions are passed to every client (shorter timeouts in tests).
 	clientOptions client.Options
+	// openBrowser opens a URL in the person's browser (auth.OpenBrowser
+	// when nil).
+	openBrowser func(string) error
+	// goos is the OS, for HeadlessReason (runtime.GOOS when empty).
+	goos string
+	// hostname names this computer, for the token's name (os.Hostname
+	// when nil).
+	hostname func() (string, error)
+	// loginWait bounds how long a browser login waits for the person
+	// (loginTimeout when zero).
+	loginWait time.Duration
 }
 
 // Execute runs pcal with the process's arguments and standard streams and
@@ -306,6 +318,7 @@ func newRootCmd(a *app) *cobra.Command {
 
 	root.AddCommand(
 		newAuthCmd(a),
+		newLoginCmd(a, "login"),
 		newLogoutCmd(a, "logout"),
 		newWhoamiCmd(a),
 	)
