@@ -141,7 +141,10 @@ type Store struct {
 	warnOnce sync.Once
 	// permOnce limits the loose-permissions warning to one per process.
 	permOnce sync.Once
-	keyring  keyringBackend
+	// unreadableOnce limits the unreadable-leftover warning to one per
+	// process.
+	unreadableOnce sync.Once
+	keyring        keyringBackend
 	// timeout bounds each keyring call; keyringTimeout outside tests.
 	timeout time.Duration
 	// lockWait bounds the wait for credentials.lock; lockTimeout outside
@@ -414,12 +417,15 @@ func (s *Store) warnFallback(err error) {
 	})
 }
 
-// warnUnreadable prints that credentials.json, a leftover while the keyring
-// is in use, couldn't be read, so any plaintext copy in it stays.
+// warnUnreadable prints, once per process, that credentials.json, a
+// leftover while the keyring is in use, couldn't be read, so any plaintext
+// copy in it stays. err comes from readFile and already names the file.
 func (s *Store) warnUnreadable(err error) {
-	_, _ = fmt.Fprintf(s.warnings,
-		"warning: couldn't read %s (%v); pcal uses the system keyring, but a plaintext copy of a credential may remain there\n",
-		s.path(), err)
+	s.unreadableOnce.Do(func() {
+		_, _ = fmt.Fprintf(s.warnings,
+			"warning: couldn't read the leftover credentials file (%v); pcal uses the system keyring, "+
+				"but a plaintext copy of a credential may still be in that file\n", err)
+	})
 }
 
 // readFile reads every credential in the fallback file, keyed by base URL.

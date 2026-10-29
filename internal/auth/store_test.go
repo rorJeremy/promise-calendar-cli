@@ -489,7 +489,10 @@ func TestUnreadableFileIsAWarningWhileTheKeyringWorks(t *testing.T) {
 	_, err := s.Get(testURL)
 	require.ErrorIs(t, err, ErrNoCredential)
 
-	require.Contains(t, warnings.String(), "warning: couldn't read "+path)
+	// One warning for the run, naming the file once (the error names it).
+	require.Equal(t, "warning: couldn't read the leftover credentials file (reading "+path+
+		": invalid character 'n' looking for beginning of object key string); pcal uses the system keyring, "+
+		"but a plaintext copy of a credential may still be in that file\n", warnings.String())
 	requireFileContent(t, path, "{not json")
 }
 
@@ -612,4 +615,20 @@ func TestResolveRejectsAControlCharacterInPCALToken(t *testing.T) {
 	require.Equal(t, "PCAL_TOKEN contains a control character, such as a line break inside the token", e.Message)
 	require.Equal(t, "Set PCAL_TOKEN to the token alone.", e.Hint)
 	require.NotContains(t, e.Message+e.Hint, "secret")
+}
+
+// After moving an entry into the keyring, the store removes it from
+// credentials.json only if it's still the entry it moved: another pcal
+// process may have replaced it in the meantime, and that newer token must
+// stay.
+func TestRemoveFromFileLeavesAReplacedEntry(t *testing.T) {
+	s, dir, _ := newStore(t, map[string]string{"PCAL_NO_KEYRING": "1"})
+	const content = `{"https://calendar.promisechurch.io":{"token":"newer","source":"browser"}}`
+	path := writeCredentialsFile(t, dir, content)
+
+	require.NoError(t, s.removeFromFile(testURL, &Credential{Token: "older", Source: SourceBrowser}))
+	requireFile(t, path, content)
+
+	require.NoError(t, s.removeFromFile(testURL, &Credential{Token: "newer", Source: SourceBrowser}))
+	requireFile(t, path, `{}`)
 }
