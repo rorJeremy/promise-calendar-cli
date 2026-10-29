@@ -101,8 +101,13 @@ pcal version | completion {bash,zsh,fish} | skill install
   stores times separately from dates, so the CLI always puts `--start` on the
   event's start date and `--end` on its end date, and an update that moves a
   timed event moves its times too.
+  A time the clocks skip in spring doesn't exist and is refused (exit 1);
+  a time the clocks repeat in fall is the first one (Jeremy's Gate 3
+  decision).
 - `--repeat`: `daily`, `weekly on sun`, `every 2 weeks on tue,thu`,
-  `monthly on the 1st sun` → RRULE. `--rrule` passes a raw rule through; the
+  `monthly on the 1st sun` → RRULE, in a small grammar around those
+  (`every other week`, `every 3 months on the last tue`, `weekly on
+  tuesday and thursday`; Gate 3). `--rrule` passes a raw rule through; the
   server validates it (422 → exit 1).
 - `--tag` takes names and resolves them to IDs via `GET /tags`; unknown name → exit 1.
   Tag names are unique only case-sensitively on the server, so an exact-case

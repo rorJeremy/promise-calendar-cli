@@ -618,22 +618,37 @@ Commit: "Add browser login".
 ## Phase 8 — `internal/parse`: dates, times, `--repeat`
 
 **Red first** (pure table tests, fixed "now" + `America/Chicago`):
-- Dates: `2026-10-04`, `today`, `tomorrow`, `sat`, `saturday`, `next sun`
-  (strictly after this week's). A bare weekday = the next occurrence, today
-  included. Invalid → exit 1.
-- Times: `10am`, `10:30am`, `6:30pm`, `18:30`, `noon`. Combined with a date →
-  RFC 3339 with the zone offset (DST-aware: check both Oct 31 and Nov 2). The
-  server would read an offset-less time as America/Chicago, but the CLI always
-  sends the offset. (DST ends 2026-11-01: 6pm on Oct 31 is `-05:00`, on Nov 2
-  `-06:00`, checked with Go 1.27.3.) Import `time/tzdata` so the zone loads on
+- Dates (`parse.Date(s, now)`, case-insensitive): `2026-10-04`, `today`,
+  `tomorrow`, `sat`, `saturday`, `next sun` (strictly after this week's: a
+  week after the bare weekday). A bare weekday = the next occurrence, today
+  included. Days are counted on the calendar (`AddDate`), not as 24 hours:
+  2026-11-01 lasts 25 hours in Chicago, so midnight plus 24 hours is still
+  Nov 1. Invalid → exit 1, with the accepted forms in the hint.
+- Times (`parse.Time`): `10am`, `10:30am`, `6:30pm`, `18:30`, `noon`
+  (case-insensitive, a space before am/pm allowed; 12am is midnight, 12pm
+  noon; a bare hour like `10` is refused as ambiguous). `parse.At(date,
+  clock)` puts it on the date in the date's zone, and `parse.Timestamp`
+  writes RFC 3339 with the zone offset (DST-aware: check both Oct 31 and
+  Nov 2). The server would read an offset-less time as America/Chicago,
+  but the CLI always sends the offset. (DST ends 2026-11-01: 6pm on Oct 31
+  is `-05:00`, on Nov 2 `-06:00`, checked with Go 1.27.3.) A time the
+  clocks skip (2:00–2:59am on 2027-03-14) is exit 1, since Go's
+  `time.Date` would quietly make 2:30am 1:30am CST; a time that happens
+  twice (1:30am on 2026-11-01) is the first, `-05:00`, Go's choice, pinned
+  by a test (Gate 3). Import `time/tzdata` (in `internal/parse`) so the zone loads on
   Windows and on minimal Linux images: Windows has no system zoneinfo
-  sources for `LoadLocation`, and a `-trimpath` release binary has no GOROOT
-  `zoneinfo.zip` to fall back to (`time/zoneinfo_read.go#loadLocation`).
+  sources for `LoadLocation`, and a `-trimpath` release binary has no
+  GOROOT `zoneinfo.zip` to fall back to (`time/zoneinfo_read.go#loadLocation`).
 - `--repeat` → RRULE: `daily` → `FREQ=DAILY`; `weekly on sun` →
   `FREQ=WEEKLY;BYDAY=SU`; `every 2 weeks on tue,thu` →
   `FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH`; `monthly on the 1st sun` →
   `FREQ=MONTHLY;BYDAY=1SU`; `monthly on the last fri` → `BYDAY=-1FR`;
-  `yearly` → `FREQ=YEARLY`. Unknown → exit 1 with the accepted forms.
+  `yearly` → `FREQ=YEARLY`. Around those, a small grammar (Gate 3):
+  `daily|weekly|monthly|yearly` or `every [N|other] day(s)|week(s)|month(s)|year(s)`;
+  weekly may add `on` and days (`sun` or `sunday`, separated by commas,
+  spaces, or "and"; each once, in the order given); monthly may add `on
+  [the]` and a position (`1st`–`5th`, `first`–`fifth`, `last`) and a day.
+  Unknown → exit 1 with the accepted forms.
   `--repeat` has no end; a series that stops needs `--rrule` with `UNTIL` or
   `COUNT` (e.g. `FREQ=WEEKLY;BYDAY=SU;UNTIL=20271231`), which the server
   supports.
@@ -642,12 +657,15 @@ Commit: "Add browser login".
   INTERVAL, BYDAY, COUNT, UNTIL, each once; INTERVAL/COUNT positive; UNTIL a
   date; weekly BYDAY = plain days; monthly BYDAY = one day with a position
   from -5 to 5; no BYDAY with DAILY/YEARLY; no `RRULE:` prefix. Every
-  `--repeat` output must satisfy that; a test asserts each one against those
-  rules.
+  `--repeat` output must satisfy that; a test asserts each one (over 300
+  generated phrases) against a Go port of those rules, and at Gate 3 every
+  distinct output was also run through the app's own concern with
+  activemodel 8.1.4.
 - `--rrule RAW` passes through **verbatim**. The CLI doesn't re-validate it
   (no second copy of the rules); a bad rule comes back as a 422 on
   `recurrence_rule` with the server's message, exit 1. `--repeat` and
-  `--rrule` together → exit 1.
+  `--rrule` together → exit 1. Both are flags of `events create|update`, so
+  they land with Phase 11; Phase 8 is the parsing only.
 
 Commit: "Add date, time, and recurrence parsing".
 
