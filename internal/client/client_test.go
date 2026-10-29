@@ -230,6 +230,7 @@ func TestStatusErrors(t *testing.T) {
 		// Redirects aren't followed: a 301 or 302 would turn a POST into a
 		// GET, and the app never redirects a JSON request it accepts.
 		{"302", 302, "", map[string]string{"Location": "/session/new"}, output.CodeAPI, 7, "the server redirected to /session/new", "Check the calendar URL (--url or PCAL_URL)."},
+		{"302 without a Location", 302, "", nil, output.CodeAPI, 7, "the server redirected (302 Found) but didn't say where", "Check the calendar URL (--url or PCAL_URL)."},
 	}
 
 	for _, tt := range tests {

@@ -8,6 +8,12 @@ on:
 
 permissions: {}
 
+# One run per branch or PR: a new push cancels the PR run it supersedes.
+# Pushes to main all run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: make check (${{ matrix.os }})
@@ -19,8 +25,10 @@ jobs:
     permissions:
       contents: read
     env:
-      # No keychain on a runner: use the 0600 credentials file, as
-      # basecamp-cli's CI does with BASECAMP_NO_KEYRING.
+      # Never touch a runner's keychain (macOS runners have one), as
+      # basecamp-cli's CI does with BASECAMP_NO_KEYRING. Today's tests pass
+      # their own environment and a fake keyring, so this guards future
+      # tests that reach the real credential store.
       PCAL_NO_KEYRING: "1"
       # Install only the URLs and checksums recorded in mise.lock.
       MISE_LOCKED: "1"

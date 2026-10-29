@@ -187,6 +187,8 @@ func TestSetRejects(t *testing.T) {
 		// PCAL_TOKEN is read from the environment on every run.
 		{"an env token", Credential{Token: "tok", Source: SourceEnv}, `can't store a credential from "env"`},
 		{"an unknown source", Credential{Token: "tok", Source: "pasted"}, `can't store a credential from "pasted"`},
+		// It could never be sent: Go refuses it in a header.
+		{"a token with a line break inside", Credential{Token: "abc\ndef", Source: SourceImported}, "the token contains a control character, such as a line break inside it"},
 	}
 
 	for _, tt := range tests {
@@ -594,4 +596,20 @@ func TestLooseCredentialsFileIsMadePrivate(t *testing.T) {
 
 	requireMode(t, path, 0o600)
 	require.Equal(t, "warning: "+path+" was readable by other users (mode 0644), so pcal made it 0600\n", warnings.String())
+}
+
+// A PCAL_TOKEN with a control character inside could never be sent, and
+// would surface as a network error. The error names the variable and
+// never echoes the token.
+func TestResolveRejectsAControlCharacterInPCALToken(t *testing.T) {
+	s, _, _ := newFakeStore(t, newFakeKeyring(t, nil), map[string]string{"PCAL_TOKEN": "secret1\nsecret2"})
+
+	_, err := s.Resolve(testURL)
+
+	var e *output.Error
+	require.ErrorAs(t, err, &e)
+	require.Equal(t, output.CodeUsage, e.Code)
+	require.Equal(t, "PCAL_TOKEN contains a control character, such as a line break inside the token", e.Message)
+	require.Equal(t, "Set PCAL_TOKEN to the token alone.", e.Hint)
+	require.NotContains(t, e.Message+e.Hint, "secret")
 }

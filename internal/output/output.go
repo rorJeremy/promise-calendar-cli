@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -179,8 +180,10 @@ func (p *Printer) Format() Format {
 	return p.format
 }
 
-// Print writes a command's result to stdout.
+// Print writes a command's result to stdout. A nil slice in Data prints
+// as an empty list, [], not null.
 func (p *Printer) Print(r Result) error {
+	r.Data = emptyIfNil(r.Data)
 	switch p.format {
 	case FormatHuman:
 		return p.printHuman(r)
@@ -194,6 +197,17 @@ func (p *Printer) Print(r Result) error {
 	default:
 		return p.emit(envelope{OK: true, Data: r.Data, Summary: r.Summary})
 	}
+}
+
+// emptyIfNil returns an empty slice of v's type when v is a nil slice, and
+// v otherwise, so a list command that found nothing prints [] rather than
+// null whether or not it made its slice.
+func emptyIfNil(v any) any {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.IsNil() {
+		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
+	return v
 }
 
 // PrintError reports err and returns the exit code for it. People get text

@@ -12,8 +12,10 @@ linters:
     - revive
   exclusions:
     rules:
-      # Tests read temp files, loosen permissions on purpose, and use fake
-      # tokens. fizzy-cli excludes gosec from tests too.
+      # Tests read temp files (G304), make loose files and directories on
+      # purpose (G302, G301), use fake tokens and a password in a URL they
+      # reject (G101), and parse a multipart form in an httptest handler
+      # without a size limit (G120). fizzy-cli excludes gosec from tests too.
       - path: _test\.go
         linters:
           - gosec

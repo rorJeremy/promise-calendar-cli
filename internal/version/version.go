@@ -1,6 +1,6 @@
-// Package version reports which build of pcal is running. Release builds set
-// Version, Commit, and Date with -ldflags "-X …" (see .goreleaser.yaml); a
-// plain `go build` keeps the defaults.
+// Package version reports which build of pcal is running. Release builds
+// will set Version, Commit, and Date with -ldflags "-X …" (the goreleaser
+// config the plan adds in Phase 14); a plain `go build` keeps the defaults.
 package version
 
 import (

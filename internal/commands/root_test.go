@@ -119,8 +119,9 @@ func TestUsageErrors(t *testing.T) {
 		{"there is no --token flag", []string{"--token", "secret"}, "unknown flag: --token", helpHint},
 		// Only list commands define --csv.
 		{"--csv is not a persistent flag", []string{"--csv"}, "unknown flag: --csv", helpHint},
-		{"--json with --quiet", []string{"--json", "--quiet"}, "--json and --quiet can't be used together", ""},
-		{"an invalid --jq", []string{"--jq", ".data["}, "invalid --jq expression", ""},
+		// Every usage error gets the help line, as in fizzy-cli (root.go:394).
+		{"--json with --quiet", []string{"--json", "--quiet"}, "--json and --quiet can't be used together", helpHint},
+		{"an invalid --jq", []string{"--jq", ".data["}, "invalid --jq expression", helpHint},
 	}
 
 	for _, tt := range tests {
@@ -200,6 +201,18 @@ func TestErrorClassification(t *testing.T) {
 			sub:      &cobra.Command{Use: "whoami", PreRunE: runE(errors.New("boom")), RunE: runE(nil)},
 			args:     []string{"whoami"},
 			wantExit: 7, wantCode: "api_error", wantMsg: "boom",
+		},
+		{
+			name:     "a usage error from RunE gets the help line",
+			sub:      &cobra.Command{Use: "whoami", RunE: runE(output.Usagef("--to 2026-10-01 is before --from 2026-10-31"))},
+			args:     []string{"whoami"},
+			wantExit: 1, wantCode: "usage", wantMsg: "--to 2026-10-01 is before --from 2026-10-31", wantHint: "Run `pcal whoami --help` for usage.",
+		},
+		{
+			name:     "a usage error with its own hint keeps it",
+			sub:      &cobra.Command{Use: "whoami", RunE: runE(&output.Error{Code: output.CodeUsage, Message: "PCAL_TOKEN is set", Hint: "Unset PCAL_TOKEN."})},
+			args:     []string{"whoami"},
+			wantExit: 1, wantCode: "usage", wantMsg: "PCAL_TOKEN is set", wantHint: "Unset PCAL_TOKEN.",
 		},
 		{
 			name:     "a wrapped *output.Error keeps its code",
@@ -290,4 +303,47 @@ func TestOutputOptionsColorFromTheEnvironment(t *testing.T) {
 			require.Equal(t, tt.wantNoColor, a.outputOptions().NoColor)
 		})
 	}
+}
+
+// The root takes no arguments of its own, so a stray word is an unknown
+// command. Like cobra's own message for a root with subcommands, it
+// suggests close command names, in the hint so the message stays one line.
+func TestUnknownCommandSuggestions(t *testing.T) {
+	runE := func(*cobra.Command, []string) error { return nil }
+	tests := []struct {
+		name     string
+		subs     []string
+		arg      string
+		wantHint string
+	}{
+		{"one close name", []string{"whoami", "events"}, "whoamj", "Did you mean `pcal whoami`? Run `pcal --help` for usage."},
+		{"a prefix", []string{"whoami", "events"}, "ev", "Did you mean `pcal events`? Run `pcal --help` for usage."},
+		{"two names it starts", []string{"tags", "tokens", "events"}, "t", "Did you mean `pcal tags` or `pcal tokens`? Run `pcal --help` for usage."},
+		{"nothing close", []string{"whoami", "events"}, "frobnicate", "Run `pcal --help` for usage."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}}
+			root := newRootCmd(a)
+			for _, name := range tt.subs {
+				root.AddCommand(&cobra.Command{Use: name, RunE: runE})
+			}
+
+			code := execute(a, root, []string{tt.arg})
+
+			require.Equal(t, 1, code, "stdout: %s", stdout.String())
+			env := decodeError(t, stdout.String())
+			require.Equal(t, "usage", env.Error.Code)
+			require.Equal(t, fmt.Sprintf("unknown command %q for \"pcal\"", tt.arg), env.Error.Message)
+			require.Equal(t, tt.wantHint, env.Error.Hint)
+		})
+	}
+}
+
+func TestOrList(t *testing.T) {
+	require.Equal(t, "a", orList([]string{"a"}))
+	require.Equal(t, "a or b", orList([]string{"a", "b"}))
+	require.Equal(t, "a, b, or c", orList([]string{"a", "b", "c"}))
 }

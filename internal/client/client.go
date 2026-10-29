@@ -229,11 +229,14 @@ func errorFor(status int, header http.Header, body []byte) *output.Error {
 
 	switch {
 	case status >= 300 && status < 400:
-		return &output.Error{
-			Code:    output.CodeAPI,
-			Message: "the server redirected to " + header.Get("Location"),
-			Hint:    "Check the calendar URL (--url or PCAL_URL).",
+		e := &output.Error{Code: output.CodeAPI, Hint: "Check the calendar URL (--url or PCAL_URL)."}
+		if location := header.Get("Location"); location != "" {
+			e.Message = "the server redirected to " + location
+		} else {
+			e.Message = fmt.Sprintf("the server redirected (%s) but didn't say where",
+				strings.TrimSpace(fmt.Sprintf("%d %s", status, http.StatusText(status))))
 		}
+		return e
 	case status == http.StatusBadRequest:
 		return &output.Error{Code: output.CodeInvalidInput, Message: message}
 	case status == http.StatusUnauthorized:

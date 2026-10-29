@@ -2,7 +2,10 @@
 
 - **Date:** 2026-09-28
 - **Status:** Approved design; reconciled with the shipped API on 2026-10-27,
-  then audited against primary sources (Gate 1b, 2026-10-27)
+  then audited against primary sources (Gate 1b, 2026-10-27). The Phase 1–5
+  code was audited (Gate 2b, 2026-10-27) and its findings fixed (Gate 2c,
+  2026-10-28); Jeremy's decisions from that audit are recorded below
+  (Storage, Precedence, Output) and in the plan's header.
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -22,7 +25,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Decision | Choice |
 |---|---|
 | Language | Go. Workload is network-bound; Go gives fast iteration, stdlib HTTP, cobra, goreleaser, and a reference codebase |
-| Libraries | `spf13/cobra`, `charmbracelet/huh`, `charmbracelet/lipgloss`, `zalando/go-keyring`, `itchyny/gojq`, `stretchr/testify` |
+| Libraries | `spf13/cobra`, `charmbracelet/huh`, `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
 | Shared toolkit | Do **not** depend on `basecamp/cli` (pre-1.0, multi-account machinery we don't need). Copy its conventions |
 | Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
 | Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
@@ -140,18 +143,37 @@ network failure still forgets locally and says the token may still be live).
 A token imported with `--with-token` is only forgotten locally, because the
 person who created it manages it.
 
-**Storage:** OS keyring (service `pcal`, key = base URL). If no keyring is
-available (headless Linux), fall back to `~/.config/pcal/credentials.json` with
-mode `0600` and warn.
+**Storage:** OS keyring (service `pcal`, key = base URL). The first keyring
+call in a run decides where credentials live for the rest of it (Jeremy's
+decision at Gate 2b). If it works, the keyring, and any later keyring
+failure is an error, never a silent switch to plaintext. If it fails or
+doesn't answer within 10 seconds (headless Linux; a locked macOS keychain
+with no one at the prompt), `~/.config/pcal/credentials.json` with mode
+`0600`, and one warning. Every keyring call is bounded at 10 seconds, as in
+basecamp-cli; a later timeout says to set `PCAL_NO_KEYRING=1`, which picks
+the file deliberately, without the warning. A token saved to the file
+during a fallback moves into the keyring the next time a run finds the
+keyring working. Writes to the file hold a lock (`credentials.lock`), so
+two pcal processes can't lose each other's entries, and a file other users
+can read is made `0600` again, with a warning.
 
 **Precedence:** flag (`--url`) > env (`PCAL_URL`, `PCAL_TOKEN`) >
 config/keyring. There is no `--token` flag: tokens never go in argv, where
 they'd land in shell history and the process list. Use `PCAL_TOKEN` or
-`--with-token`. Default URL `https://calendar.promisechurch.io`.
+`--with-token`. Default URL `https://calendar.promisechurch.io`. The URL must
+be `https://`; `http://` is accepted only for localhost and loopback
+addresses (127.0.0.0/8, ::1), so a token is never sent unencrypted (Jeremy's
+decision at Gate 2b). It's canonicalized (lowercase host, no default port or
+trailing dot), because it's also the credential key.
 
 ## Output
 
-- **TTY:** lipgloss table for lists, key/value card for `show`; respects `NO_COLOR`.
+- **TTY:** lipgloss table for lists, key/value card for `show`. Styling is bold
+  only, and off with `NO_COLOR`, or with `CLICOLOR=0` or `TERM=dumb` unless
+  `CLICOLOR_FORCE` is set (termenv's rules). Control characters in anything
+  shown, server text included, appear as visible escapes (`\x1b`), since some
+  of it, such as RSVP names, comes from a public form (Jeremy's decision at
+  Gate 2b).
 - **`--json` or stdout not a TTY:**
   ```json
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}
@@ -165,10 +187,14 @@ they'd land in shell history and the process list. Use `PCAL_TOKEN` or
   the nested shape because it carries a 422's per-field messages in `fields`,
   which a flat message string can't. Like fizzy-cli's, it has a `hint` saying
   what to do next (Jeremy, at the Gate 2 review). `fields` and `hint` are
-  left out when empty.
+  left out when empty. Every usage error has a hint, at least "Run
+  `<command> --help` for usage.", and an unknown command suggests close
+  command names there (Jeremy's decisions at Gate 2b). A list that found
+  nothing is `"data": []`, never `null`.
 - `--jq EXPR` — built-in gojq over the envelope; implies `--json`.
 - `--quiet` — bare `data`, no envelope.
-- `--csv` — lists only.
+- `--csv` — lists only. A cell a spreadsheet would run as a formula (starting
+  with `=`, `+`, `-`, or `@`) gets a leading `'`.
 - Deletes and `website-token rotate` confirm unless `--yes`. With no TTY and no
   `--yes`, they fail with exit 1.
 

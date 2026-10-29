@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -94,11 +95,62 @@ func execute(a *app, root *cobra.Command, args []string) int {
 		// *output.Error, so this one is cobra's: an unknown command or
 		// flag, the wrong arguments, or a missing required flag.
 		e = &output.Error{Code: output.CodeUsage, Message: err.Error(), Cause: err}
-		if cmd != nil {
-			e.Hint = fmt.Sprintf("Run `%s --help` for usage.", cmd.CommandPath())
-		}
+	}
+	if e.Code == output.CodeUsage && e.Hint == "" {
+		// Every usage error says where the usage is, as in fizzy-cli
+		// (root.go:394). A copy, so the error itself is left as it was.
+		withHint := *e
+		withHint.Hint = helpHint(cmd)
+		e = &withHint
 	}
 	return a.errorPrinter().PrintError(e)
+}
+
+// helpHint returns "Run `<command> --help` for usage." for cmd, the
+// command cobra was running (the root if it got no further).
+func helpHint(cmd *cobra.Command) string {
+	path := "pcal"
+	if cmd != nil {
+		path = cmd.CommandPath()
+	}
+	return fmt.Sprintf("Run `%s --help` for usage.", path)
+}
+
+// unknownCommand is the root's Args. pcal takes no arguments of its own, so
+// a stray word is an unknown command. cobra.NoArgs says so but suggests
+// nothing, and once the root has subcommands, cobra's own check (legacyArgs,
+// used only when Args is nil) puts its suggestions in the message across
+// several lines. Here they go in the hint, so the message stays one line:
+// "Did you mean `pcal whoami`? Run `pcal --help` for usage."
+func unknownCommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	hint := helpHint(cmd)
+	if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
+		names := make([]string, len(suggestions))
+		for i, name := range suggestions {
+			names[i] = "`" + cmd.CommandPath() + " " + name + "`"
+		}
+		hint = "Did you mean " + orList(names) + "? " + hint
+	}
+	return &output.Error{
+		Code:    output.CodeUsage,
+		Message: fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath()),
+		Hint:    hint,
+	}
+}
+
+// orList joins items as English does: "a", "a or b", "a, b, or c".
+func orList(items []string) string {
+	switch len(items) {
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " or " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + ", or " + items[len(items)-1]
+	}
 }
 
 // typeOwnErrors wraps the error-returning hooks and RunE of cmd and every
@@ -173,10 +225,13 @@ func newRootCmd(a *app) *cobra.Command {
 		Short: "Manage the Promise Church calendar from the terminal",
 		Long: "pcal manages events, tags, RSVPs, images, and tokens on the Promise Church\n" +
 			"calendar. It prints tables in a terminal and a JSON envelope when piped.",
-		// The root runs only to show help. NoArgs makes a stray word an
-		// "unknown command" error; without it, cobra accepts any argument on a
-		// command with no subcommands.
-		Args: cobra.NoArgs,
+		// The root runs only to show help, so a stray word is an "unknown
+		// command" error with suggestions (see unknownCommand). Without an
+		// Args, cobra accepts any argument while the root has no
+		// subcommands.
+		Args: unknownCommand,
+		// cobra's default suggestion distance, which only its own check sets.
+		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE: func(*cobra.Command, []string) error {
 			p, err := output.New(a.streams.Out, a.streams.Err, a.outputOptions())
 			if err != nil {

@@ -193,6 +193,8 @@ func TestPrintJSON(t *testing.T) {
 		// fizzy-cli's Response has `data,omitempty` too.
 		{"no data, no data key", Result{Summary: "Deleted tag Worship"}, `{"ok":true,"summary":"Deleted tag Worship"}`},
 		{"an empty list is still data", Result{Data: []tag{}, Summary: "0 tags"}, `{"ok":true,"data":[],"summary":"0 tags"}`},
+		// A list command that found nothing may hold a nil slice.
+		{"a nil list is an empty list", Result{Data: []tag(nil), Summary: "0 tags"}, `{"ok":true,"data":[],"summary":"0 tags"}`},
 	}
 
 	for _, tt := range tests {
@@ -550,4 +552,25 @@ func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
 		"'@SUM(A1),'-2\n"+
 		"'\tTab,\"'\rReturn\"\n"+
 		"Plain,555 0100\n", out.String())
+}
+
+func TestPrintNilListAsEmptyList(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{"--quiet", Options{Quiet: true}, "[]\n"},
+		{"--jq", Options{JQ: ".data"}, "[]\n"},
+		{"in a terminal with nothing else to render it", Options{TTY: true, NoColor: true}, "[]\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, out, _ := newTestPrinter(t, tt.opts)
+
+			require.NoError(t, p.Print(Result{Data: []tag(nil)}))
+			require.Equal(t, tt.want, out.String())
+		})
+	}
 }

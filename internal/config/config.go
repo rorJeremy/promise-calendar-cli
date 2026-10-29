@@ -77,8 +77,9 @@ func Save(dir string, c Config) error {
 // WriteFile replaces path, a file in pcal's own config directory, with
 // data, readable only by its owner (0600). It creates the directory if
 // needed and makes it 0700 even if it already existed with looser
-// permissions. It writes a temporary file and renames it over path, so a
-// crash never leaves a half-written file.
+// permissions. It writes a temporary file and renames it over path, so if
+// pcal dies partway, path keeps its old contents. It doesn't fsync (nor does
+// basecamp/cli's credstore), so a power cut can still lose the write.
 func WriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

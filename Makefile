@@ -42,10 +42,11 @@ check: fmt-check vet lint tidy-check test
 
 ## golden: replace testdata/api/ with the calendar app's golden JSON, the
 ## API contract (make golden RAILS=../promise-church-calendar). Manual: check
-## and CI never need the app. Files the app dropped are dropped here too.
+## and CI never need the app. Files the app dropped are dropped here too;
+## nothing is removed unless the app has golden files to copy.
 golden:
-	@test -d "$(RAILS)/test/fixtures/files/api" || \
-		(echo "No $(RAILS)/test/fixtures/files/api. Run: make golden RAILS=<path to promise-church-calendar>"; exit 1)
+	@ls "$(RAILS)"/test/fixtures/files/api/*.json >/dev/null 2>&1 || \
+		(echo "No golden JSON in $(RAILS)/test/fixtures/files/api, so testdata/api is left alone. Run: make golden RAILS=<path to promise-church-calendar>"; exit 1)
 	rm -f testdata/api/*.json
 	mkdir -p testdata/api
 	cp "$(RAILS)"/test/fixtures/files/api/*.json testdata/api/

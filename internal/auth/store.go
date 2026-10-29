@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gofrs/flock"
 	"github.com/zalando/go-keyring"
@@ -167,12 +168,28 @@ func NewStore(dir string, getenv func(string) string, warnings io.Writer) *Store
 
 // Resolve returns the credential to call baseURL with: PCAL_TOKEN when it's
 // set (source and store "env"), otherwise the stored one. It returns
-// ErrNoCredential when there's neither.
+// ErrNoCredential when there's neither, and a usage error when PCAL_TOKEN
+// holds a control character.
 func (s *Store) Resolve(baseURL string) (Credential, error) {
 	if token := strings.TrimSpace(s.getenv("PCAL_TOKEN")); token != "" {
+		if hasControl(token) {
+			return Credential{}, &output.Error{
+				Code:    output.CodeUsage,
+				Message: "PCAL_TOKEN contains a control character, such as a line break inside the token",
+				Hint:    "Set PCAL_TOKEN to the token alone.",
+			}
+		}
 		return Credential{Token: token, Source: SourceEnv, Store: StoreEnv}, nil
 	}
 	return s.Get(baseURL)
+}
+
+// hasControl reports whether token holds a control character, such as a
+// line break pasted inside it. Go refuses to send one in a header, so the
+// request would fail as a network error. Errors about it never quote the
+// token.
+func hasControl(token string) bool {
+	return strings.IndexFunc(token, unicode.IsControl) >= 0
 }
 
 // Get returns the stored credential for baseURL, or ErrNoCredential. While
@@ -236,13 +253,17 @@ func (s *Store) moveToKeyring(baseURL string) (Credential, error) {
 }
 
 // Set stores c for baseURL, replacing any earlier credential. Only browser
-// and imported tokens are stored.
+// and imported tokens are stored, and never one with a control character
+// in it.
 func (s *Store) Set(baseURL string, c Credential) error {
 	if c.Token == "" {
 		return errors.New("can't store an empty token")
 	}
 	if c.Source != SourceBrowser && c.Source != SourceImported {
 		return fmt.Errorf("can't store a credential from %q", c.Source)
+	}
+	if hasControl(c.Token) {
+		return output.Usagef("the token contains a control character, such as a line break inside it")
 	}
 	stored := Credential{Token: c.Token, Source: c.Source}
 

@@ -44,6 +44,37 @@ keep the nested error envelope, a deliberate deviation from fizzy-cli
 mode (Phase 6), and the `debug.ReadBuildInfo` version fallback (Phase 13).
 At the Gate 2 review he added an optional `hint` to the error object.
 
+**Audited 2026-10-27 (Gate 2b), fixed 2026-10-28 (Gate 2c).** An
+independent review of the Phase 1–5 code from a cleared context found 23
+issues, F1–F23 (6 Medium, 10 Low, 7 Nit; nothing Critical or High), and
+Gate 2c fixed them all, test first, in five commits. Jeremy's decisions on
+the choices the audit left open:
+- F3/F4: pick the keyring backend once per process, on the first keyring
+  call. A result or "not found" means the keyring for the rest of the run,
+  and later keyring errors are returned, never a silent fallback. Any other
+  error, or a timeout on that first call, means the file plus the one
+  warning. Every keyring call is bounded at 10 seconds; a later timeout's
+  error suggests `PCAL_NO_KEYRING=1`. Tests use a keyring interface with a
+  fake, never the real keychain (Phase 3).
+- F6: `http://` only for loopback hosts (localhost, 127.0.0.0/8, ::1);
+  anything else is a usage error that says why (Phase 3).
+- F11: lock the read-modify-write of `credentials.json` with
+  `github.com/gofrs/flock` (v0.13.1, as basecamp-cli; its `go 1.25.0`
+  leaves ours at `go 1.26.0`) (Phase 3).
+- F14: keep the root's "unknown command" error and add cobra's suggestions
+  (`cmd.SuggestionsFor`), in the hint (Phase 1).
+- F5: human output shows control characters as visible escapes, including
+  in error text from the server (Phase 2).
+- F20: `Print` turns a nil slice into `[]` (Phase 2).
+- F23: every usage error without a hint gets "Run `<command> --help` for
+  usage." (Phase 2).
+The other findings took the audit's proposed fix. Among them: only cobra's
+own errors are usage errors (F1); a keyring miss moves a fallback-era
+token into the keyring (F10); the canonical URL drops default ports and a
+trailing dot (F7); pcal's directory and `credentials.json` are kept private
+(F8); CSV cells are guarded against formulas (F15); styling follows
+`CLICOLOR`/`TERM=dumb` as termenv does (F21); and doc fixes (F17).
+
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
 `mise exec -- make check` green before its one commit. Commit messages carry
@@ -116,8 +147,12 @@ below are to those repos.
 - `go mod init github.com/rorJeremy/promise-calendar-cli`, then
   `go mod edit -go=1.26`: `go mod init` writes the running toolchain's
   version (`go 1.27.3`). `go 1.26` is the minimum for `go install` users, and
-  it's independent of the 1.27.3 toolchain mise pins for development. No
-  planned dependency needs more (gojq and x/sys need 1.24, huh 1.23).
+  it's independent of the 1.27.3 toolchain mise pins for development. `go mod
+  tidy` then wrote `go 1.26.0`, because golang.org/x/sys v0.49.0 and
+  golang.org/x/term v0.47.0 declare `go 1.26.0` (accepted at the Gate 2
+  review). No other dependency needs more: gojq 0.12.19 declares 1.24.0,
+  gofrs/flock v0.13.1 1.25.0, huh 1.0.0 1.23.0 (`go list -m -f
+  '{{.GoVersion}}' all`, Gate 2c).
 - `cmd/pcal/main.go` → `os.Exit(commands.Execute())`.
 - `internal/version`: `Version`, `Commit`, `Date` vars (set via ldflags, as in
   basecamp-cli `.goreleaser.yaml` → `internal/version.Version`), plus
@@ -127,7 +162,17 @@ below are to those repos.
   so tokens never land in shell history or `ps`. `--csv` is not persistent:
   only list commands define it, so `show --csv` is an unknown flag (exit 1).
   `SilenceUsage`/`SilenceErrors` are on; until Phase 2, `Execute` returns 1
-  for any error, and from Phase 2 errors go through `output`.
+  for any error, and from Phase 2 errors go through `output`. Only cobra's
+  own errors (an unknown command or flag, wrong arguments, a missing
+  required flag) are usage errors: before cobra runs, every command's
+  `PersistentPreRunE`, `PreRunE`, `RunE`, `PostRunE`, and
+  `PersistentPostRunE` are wrapped so that a plain error from pcal's code is
+  an API error, exit 7 (Gate 2b F1). The root's `Args` reports a stray word
+  as `unknown command "x" for "pcal"` with cobra's suggestions in the hint,
+  "Did you mean `pcal whoami`?" (F14). `cobra.NoArgs` gives none, and
+  cobra's own check runs only when `Args` is nil. Group commands
+  (`pcal events`) need the same `Args` in Gate 3: a non-runnable command
+  returns help before cobra checks arguments.
 - `Makefile` (modelled on fizzy-cli's `check` default goal): `build`, `test`
   (`go test -race ./...`), `vet`, `lint` (golangci-lint), `fmt-check`,
   `tidy-check`, `check` (all of them), `golden` (Phase 5).
@@ -141,7 +186,9 @@ below are to those repos.
 - `.github/workflows/test.yml`: matrix `ubuntu-latest`, `macos-latest`;
   `actions/checkout` → `jdx/mise-action` (installs go, golangci-lint, and
   goreleaser from `mise.toml`, caches by default, and adds them to `PATH`) →
-  `make check`. Env `PCAL_NO_KEYRING=1` (basecamp-cli sets
+  `make check`. A `concurrency:` group per workflow and ref cancels a PR run
+  that a newer push supersedes (zizmor's pedantic persona asks for one;
+  Gate 2b F22). Env `PCAL_NO_KEYRING=1` (basecamp-cli sets
   `BASECAMP_NO_KEYRING` in CI) and `MISE_LOCKED=1`, so installs use only the
   URLs and checksums in `mise.lock` and fail instead of resolving anything
   new. (mise-action already runs `mise install --locked` when it finds a
@@ -174,7 +221,21 @@ Commit: "Scaffold pcal".
   `data`; `--jq` → implies JSON and runs gojq over the envelope (compile error
   → exit 1, as fizzy-cli's `ErrJQValidation` is a usage error); `--csv` →
   lists only (list commands define the flag; see Phase 1).
-- TTY table (lipgloss) and key/value card. `NO_COLOR` disables styling.
+- TTY table (lipgloss) and key/value card. Styling (bold only) is off when
+  `NO_COLOR` is set, or with `CLICOLOR=0` or `TERM=dumb` unless
+  `CLICOLOR_FORCE` is set, as termenv decides (Gate 2b F21).
+- Human output (tables, cards, summaries, and error text, the server's
+  included) shows every control character as a visible Go escape (`\x1b`,
+  `\u009b`), keeping line breaks in card values. RSVP names come from a
+  public form, so raw escape sequences could otherwise reach a staff
+  member's terminal (F5).
+- `--csv` cells starting with `=`, `+`, `-`, `@`, a tab, or a carriage
+  return get a leading `'`, so a spreadsheet won't run them as formulas
+  (F15).
+- `Print` turns a nil slice into `[]`, so an empty list is never `null`
+  (F20).
+- Every usage error without its own hint gets "Run `<command> --help` for
+  usage.", as fizzy-cli prints for every usage error (F23).
 - The `Error` type carries `Code`, `Message`, `Fields`, `Hint`, and
   `ExitCode()`.
 
@@ -212,14 +273,43 @@ Phase 7 browser login.
 - Config path: `$XDG_CONFIG_HOME/pcal/config.json`, else
   `~/.config/pcal/config.json` (the design says `~/.config` on macOS too, so
   don't use `os.UserConfigDir`). It stores `url` and a cached `time_zone`.
-  Written `0600`, dir `0700`.
+  Written `0600`, dir `0700` (an existing directory is made 0700 on write;
+  Gate 2b F8).
+- The URL must be `https://`, or `http://` to localhost, 127.0.0.0/8, or
+  ::1, because http would send the token unencrypted; anything else is a
+  usage error saying so (F6). It's canonicalized, because it's also the
+  credential key: lowercase scheme and host, no trailing dot, no default or
+  empty port, the path as escaped (`%2F` stays), and no trailing slash (F7).
+  No user name or password, query, or fragment.
 - Credentials: keyring (`zalando/go-keyring`, service `pcal`, key = base URL);
   tests use `keyring.MockInit()`, and `keyring.MockInitWithError(err)` for
   the fallback branch (both in go-keyring v0.2.8 `keyring_mock.go`), so no
   test touches the real keychain. A missing entry is `keyring.ErrNotFound`,
-  which means "not stored", not a keyring failure. When the keyring errors or
-  `PCAL_NO_KEYRING=1` is set → `credentials.json` (`0600`) plus a one-time
-  stderr warning. `Delete` removes both.
+  which means "not stored", not a keyring failure. `PCAL_NO_KEYRING=1` →
+  `credentials.json` (`0600`), with no warning. Otherwise the first keyring
+  call in a process decides (Gate 2b F3/F4, Jeremy's decision): a result or
+  `ErrNotFound` → the keyring for the rest of the run, and later keyring
+  errors are returned, never a silent fallback to plaintext; any other
+  error, or no answer → `credentials.json` plus a one-time stderr warning.
+  Every keyring call gives up after 10 seconds (go-keyring has no timeout:
+  macOS runs `/usr/bin/security`, which hangs on a locked keychain with no
+  one at the prompt, and D-Bus can stall; basecamp-cli uses the same
+  bound). A timeout after the first call is an error whose hint suggests
+  `PCAL_NO_KEYRING=1`. Tests inject a fake through a small keyring
+  interface.
+- `Delete` removes both, and reports a keyring failure ("it may still be
+  stored there") after still removing the file copy (F2). While the keyring
+  is in use, an unreadable `credentials.json` is only a warning (F9), and a
+  keyring miss checks the file: an entry saved there during a fallback moves
+  into the keyring (F10, after basecamp/cli's `MigrateToKeyring`). Every
+  read-modify-write of the file holds `credentials.lock` (gofrs/flock),
+  waiting up to 10 seconds for another pcal process (F11). A file that
+  other users can read is made 0600 again, with a warning (F8).
+- "Not logged in" is `auth_required`, exit 3, with the hint "Run `pcal
+  login`."; `errors.Is(err, auth.ErrNoCredential)` still matches (F1). A
+  token with a control character in it (say, a line break inside
+  `PCAL_TOKEN`) is refused with an error that names the variable and never
+  echoes the token (F19).
 - The stored credential records `source`: `browser` (minted by `pcal login`)
   or `imported` (`--with-token`). `PCAL_TOKEN` is reported as source `env` and
   is never stored. Logout (Phase 6) depends on this.
@@ -245,6 +335,9 @@ Commit: "Add config and credential storage".
   allows): 400 → 1, 401 → 3 (hint "run `pcal login`"), 403 → 4 (message
   "token is read-only" when the body says `read_only_token`), 404 → 2, 422 → 1,
   429 → 5, 5xx → 7, any other status (e.g. 406) → 7. Dial/timeout → 6.
+  Redirects aren't followed: a 3xx → 7, "the server redirected to
+  <Location>", or "the server redirected (302 Found) but didn't say where"
+  when there's no `Location` (Gate 2b F18).
 - Error bodies come in three shapes, and the parser must take all of them:
   `{"error":"invalid_date"}` (the app's), `{"status":400,"error":"Bad
   Request"}` (Rails defaults for malformed JSON, unknown routes, 406), and
@@ -271,7 +364,7 @@ Commit: "Add config and credential storage".
   `http.Client.Timeout` covers sending the body and 10 MB over a slow uplink
   takes longer than 30 seconds.
 - `--verbose` (hidden) logs `> METHOD URL` and `< STATUS text` to stderr like
-  fizzy-cli `internal/client/client.go:195` and `:210`. (fizzy's `--verbose` is
+  fizzy-cli `internal/client/client.go:196` and `:211`. (fizzy's `--verbose` is
   a visible root flag, `root.go:414`; hiding it is our choice.) Never log the
   `Authorization` header.
 
@@ -280,7 +373,9 @@ Commit: "Add HTTP client".
 ## Phase 5 — Golden JSON contract
 
 - `testdata/api/*.json`: the 17 files copied from the Rails repo's
-  `test/fixtures/files/api/` via `make golden RAILS=../promise-church-calendar`.
+  `test/fixtures/files/api/` via `make golden RAILS=../promise-church-calendar`,
+  which changes nothing unless that directory has `.json` files (Gate 2b
+  F16).
   Their data is all synthetic (example.com addresses, "Admin User", zeroed
   tokens, 2099 dates), so copying them from the private app into this public
   repo exposes nothing. `make golden` is a manual target; `make check` and CI
@@ -779,5 +874,6 @@ Commit: "Add release pipeline".
 - **365-occurrence cap** (server, not fixed): long-running daily series drop
   out of `events list` and title resolution in later windows. Documented in
   the README; a server fix would need no CLI change.
-- **Keyring on headless Linux** falls back to a `0600` file with a warning
+- **Keyring on headless Linux** (or a keychain that doesn't answer within
+  10 seconds on the first call) falls back to a `0600` file with a warning
   (design). CI forces the fallback with `PCAL_NO_KEYRING=1`.

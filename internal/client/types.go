@@ -77,7 +77,8 @@ type Occurrence struct {
 }
 
 // Tag is a tag as /tags returns it (tag.json, tags.json). Color is
-// "#RRGGBB" or null; position may be null.
+// "#RRGGBB", "" (the app allows a blank color: tag.rb's allow_blank), or
+// null; position may be null.
 type Tag struct {
 	ID       string  `json:"id"`
 	Name     string  `json:"name"`
