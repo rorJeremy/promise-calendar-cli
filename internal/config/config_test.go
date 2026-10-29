@@ -127,6 +127,25 @@ func TestResolveURL(t *testing.T) {
 		{name: "a missing host is rejected", flag: "https://", wantErr: "invalid calendar URL"},
 		{name: "a query is rejected", flag: "https://calendar.promisechurch.io/?x=1", wantErr: "invalid calendar URL"},
 		{name: "an invalid PCAL_URL is rejected", vars: map[string]string{"PCAL_URL": "nope"}, wantErr: "invalid calendar URL"},
+		// http would send the token unencrypted: loopback only.
+		{name: "http to a public host is rejected", flag: "http://calendar.promisechurch.io", wantErr: `invalid calendar URL "http://calendar.promisechurch.io": http would send your token unencrypted, so pcal allows it only for localhost, 127.0.0.0/8, and ::1; use https`},
+		{name: "http to a private address is rejected", flag: "http://10.0.0.5:3000", wantErr: "http would send your token unencrypted"},
+		{name: "http to a name containing localhost is rejected", flag: "http://evil.localhost.example.com", wantErr: "http would send your token unencrypted"},
+		{name: "http to localhost", flag: "http://localhost:3000", want: "http://localhost:3000"},
+		{name: "http to 127.0.0.1", flag: "http://127.0.0.1:3000", want: "http://127.0.0.1:3000"},
+		{name: "http to anywhere in 127.0.0.0/8", flag: "http://127.1.2.3", want: "http://127.1.2.3"},
+		{name: "http to ::1", flag: "http://[::1]:3000", want: "http://[::1]:3000"},
+		// One calendar, one credential key, however its URL is spelled.
+		{name: "the default https port is dropped", flag: "https://calendar.promisechurch.io:443", want: "https://calendar.promisechurch.io"},
+		{name: "the default http port is dropped", flag: "http://localhost:80/", want: "http://localhost"},
+		{name: "another port is kept", flag: "https://calendar.promisechurch.io:8443", want: "https://calendar.promisechurch.io:8443"},
+		{name: "an empty port is dropped", flag: "https://calendar.promisechurch.io:", want: "https://calendar.promisechurch.io"},
+		{name: "a host that is only a dot is rejected", flag: "https://.", wantErr: `invalid calendar URL "https://."`},
+		{name: "a trailing dot on the host is dropped", flag: "https://calendar.promisechurch.io.", want: "https://calendar.promisechurch.io"},
+		{name: "a trailing dot and uppercase on localhost", flag: "http://LOCALHOST.:3000", want: "http://localhost:3000"},
+		{name: "an IPv6 host with the default port", flag: "https://[::1]:443/", want: "https://[::1]"},
+		{name: "an escaped slash in the path stays escaped", flag: "https://calendar.example.com/a%2Fb/", want: "https://calendar.example.com/a%2Fb"},
+		{name: "a path is kept", flag: "https://calendar.example.com/staff/", want: "https://calendar.example.com/staff"},
 	}
 
 	for _, tt := range tests {
@@ -152,4 +171,16 @@ func requireMode(t *testing.T, path string, want os.FileMode) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, want, info.Mode().Perm(), path)
+}
+
+// WriteFile only writes into pcal's own config directory, so it makes that
+// directory private even when it already existed with looser permissions.
+func TestWriteFileMakesAnExistingDirectoryPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pcal")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	require.NoError(t, WriteFile(filepath.Join(dir, "config.json"), []byte("{}")))
+
+	requireMode(t, dir, 0o700)
 }

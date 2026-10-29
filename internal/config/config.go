@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -73,12 +74,17 @@ func Save(dir string, c Config) error {
 	return WriteFile(filepath.Join(dir, fileName), append(data, '\n'))
 }
 
-// WriteFile replaces path with data, readable only by its owner (0600),
-// creating the directory (0700) if needed. It writes a temporary file and
-// renames it over path, so a crash never leaves a half-written file.
+// WriteFile replaces path, a file in pcal's own config directory, with
+// data, readable only by its owner (0600). It creates the directory if
+// needed and makes it 0700 even if it already existed with looser
+// permissions. It writes a temporary file and renames it over path, so a
+// crash never leaves a half-written file.
 func WriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: a directory, which needs its execute bit; 0700 is owner-only
 		return err
 	}
 
@@ -104,9 +110,14 @@ func WriteFile(path string, data []byte) error {
 }
 
 // ResolveURL returns the calendar's base URL from, in order: the --url
-// flag, PCAL_URL, the saved config, and DefaultURL. It must be http or
-// https with a host and no query; the result has a lowercase scheme and
-// host and no trailing slash. A bad URL is a usage error (exit 1).
+// flag, PCAL_URL, the saved config, and DefaultURL. It must be https, or
+// http to localhost or a loopback address (127.0.0.0/8, ::1), since http
+// would send the token unencrypted; it must have a host, and no user name
+// or password, query, or fragment. The result is canonical, because it's
+// also the key credentials are stored under: a lowercase scheme and host,
+// no trailing dot on the host, no default (443, 80) or empty port, and the
+// path as escaped, without a trailing slash. A bad URL is a usage error
+// (exit 1).
 func ResolveURL(flagURL string, getenv func(string) string, c Config) (string, error) {
 	raw := DefaultURL
 	switch {
@@ -120,13 +131,45 @@ func ResolveURL(flagURL string, getenv func(string) string, c Config) (string, e
 	return normalizeURL(raw)
 }
 
-// normalizeURL checks raw and returns it in canonical form, which is also
-// the key credentials are stored under.
+// normalizeURL checks raw and returns it in the canonical form ResolveURL
+// describes.
 func normalizeURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
 		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", output.Usagef("invalid calendar URL %q: use the form https://calendar.example.com", raw)
 	}
-	return u.Scheme + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.Path, "/"), nil
+
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "" {
+		return "", output.Usagef("invalid calendar URL %q: use the form https://calendar.example.com", raw)
+	}
+	if u.Scheme == "http" && !isLoopback(host) {
+		return "", output.Usagef("invalid calendar URL %q: http would send your token unencrypted, "+
+			"so pcal allows it only for localhost, 127.0.0.0/8, and ::1; use https", raw)
+	}
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+
+	// An IPv6 host goes back in brackets; url.URL escapes a zone's "%"
+	// (fe80::1%25en0) when it prints the host.
+	canonical := url.URL{Scheme: u.Scheme, Host: host}
+	if port != "" {
+		canonical.Host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		canonical.Host = "[" + host + "]"
+	}
+	return canonical.String() + strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
+// isLoopback reports whether host, lowercase and without brackets, is
+// localhost or a loopback IP address (127.0.0.0/8 or ::1).
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

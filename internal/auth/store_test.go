@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -574,4 +575,23 @@ func TestFileWriteGivesUpWhenAnotherProcessHoldsTheLock(t *testing.T) {
 
 	require.EqualError(t, err, "another pcal process held "+lockPath+" for 50ms; wait for it to finish, then try again")
 	require.NoFileExists(t, filepath.Join(dir, "credentials.json"))
+}
+
+// A credentials.json others can read is made 0600 again, with one warning.
+func TestLooseCredentialsFileIsMadePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits")
+	}
+	s, dir, warnings := newStore(t, map[string]string{"PCAL_NO_KEYRING": "1"})
+	path := writeCredentialsFile(t, dir, `{"https://calendar.promisechurch.io":{"token":"tok","source":"browser"}}`)
+	require.NoError(t, os.Chmod(path, 0o644))
+
+	got, err := s.Get(testURL)
+	require.NoError(t, err)
+	require.Equal(t, "tok", got.Token)
+	_, err = s.Get(testURL)
+	require.NoError(t, err)
+
+	requireMode(t, path, 0o600)
+	require.Equal(t, "warning: "+path+" was readable by other users (mode 0644), so pcal made it 0600\n", warnings.String())
 }

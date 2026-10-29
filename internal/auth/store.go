@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,8 @@ type Store struct {
 	getenv   func(string) string
 	warnings io.Writer
 	warnOnce sync.Once
+	// permOnce limits the loose-permissions warning to one per process.
+	permOnce sync.Once
 	keyring  keyringBackend
 	// timeout bounds each keyring call; keyringTimeout outside tests.
 	timeout time.Duration
@@ -412,7 +415,30 @@ func (s *Store) readFile() (map[string]Credential, error) {
 	if err := json.Unmarshal(data, &all); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", s.path(), err)
 	}
+	s.makePrivate()
 	return all, nil
+}
+
+// makePrivate makes the fallback file 0600 again if other users can read or
+// write it, and says so once per process. Windows has no Unix permission
+// bits to check.
+func (s *Store) makePrivate() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(s.path())
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return
+	}
+	mode := info.Mode().Perm()
+	err = os.Chmod(s.path(), 0o600)
+	s.permOnce.Do(func() {
+		if err != nil {
+			_, _ = fmt.Fprintf(s.warnings, "warning: %s is readable by other users (mode %04o), and pcal couldn't make it 0600: %v\n", s.path(), mode, err)
+			return
+		}
+		_, _ = fmt.Fprintf(s.warnings, "warning: %s was readable by other users (mode %04o), so pcal made it 0600\n", s.path(), mode)
+	})
 }
 
 // writeFile replaces the fallback file with all, mode 0600.
