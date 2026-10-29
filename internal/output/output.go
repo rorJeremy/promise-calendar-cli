@@ -395,6 +395,13 @@ func visible(s string, keepNewlines bool) string {
 	return b.String()
 }
 
+// Visible returns s, one line of text for a terminal, with every control
+// character shown as its escape (see visible): for warnings and notes
+// that may quote the server.
+func Visible(s string) string {
+	return visible(s, false)
+}
+
 // visibleAll returns cells, each passed through visible without line breaks.
 func visibleAll(cells []string) []string {
 	shown := make([]string, len(cells))

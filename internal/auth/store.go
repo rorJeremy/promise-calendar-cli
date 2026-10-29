@@ -174,8 +174,8 @@ func NewStore(dir string, getenv func(string) string, warnings io.Writer) *Store
 // ErrNoCredential when there's neither, and a usage error when PCAL_TOKEN
 // holds a control character.
 func (s *Store) Resolve(baseURL string) (Credential, error) {
-	if token := strings.TrimSpace(s.getenv("PCAL_TOKEN")); token != "" {
-		if hasControl(token) {
+	if token := EnvToken(s.getenv); token != "" {
+		if CheckToken(token) != nil {
 			return Credential{}, &output.Error{
 				Code:    output.CodeUsage,
 				Message: "PCAL_TOKEN contains a control character, such as a line break inside the token",
@@ -187,12 +187,20 @@ func (s *Store) Resolve(baseURL string) (Credential, error) {
 	return s.Get(baseURL)
 }
 
-// hasControl reports whether token holds a control character, such as a
-// line break pasted inside it. Go refuses to send one in a header, so the
-// request would fail as a network error. Errors about it never quote the
-// token.
-func hasControl(token string) bool {
-	return strings.IndexFunc(token, unicode.IsControl) >= 0
+// EnvToken returns PCAL_TOKEN, trimmed, as getenv reads it, or "" when
+// it's unset. When it's set, it's the credential every command uses.
+func EnvToken(getenv func(string) string) string {
+	return strings.TrimSpace(getenv("PCAL_TOKEN"))
+}
+
+// CheckToken returns a usage error when token holds a control character,
+// such as a line break pasted inside it, which can't be sent in a header.
+// The error never quotes the token.
+func CheckToken(token string) error {
+	if strings.IndexFunc(token, unicode.IsControl) >= 0 {
+		return output.Usagef("the token contains a control character, such as a line break inside it")
+	}
+	return nil
 }
 
 // Get returns the stored credential for baseURL, or ErrNoCredential. While
@@ -265,8 +273,8 @@ func (s *Store) Set(baseURL string, c Credential) error {
 	if c.Source != SourceBrowser && c.Source != SourceImported {
 		return fmt.Errorf("can't store a credential from %q", c.Source)
 	}
-	if hasControl(c.Token) {
-		return output.Usagef("the token contains a control character, such as a line break inside it")
+	if err := CheckToken(c.Token); err != nil {
+		return err
 	}
 	stored := Credential{Token: c.Token, Source: c.Source}
 

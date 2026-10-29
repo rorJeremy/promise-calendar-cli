@@ -28,6 +28,9 @@ func TestExitCodes(t *testing.T) {
 		{"ExitNetwork", ExitNetwork, 6},
 		{"ExitAPI", ExitAPI, 7},
 		{"ExitAmbiguous", ExitAmbiguous, 8},
+		// 128 + SIGINT, as a shell reports a process Ctrl-C stopped, and as
+		// basecamp-cli exits for a canceled login (output/codes.go).
+		{"ExitInterrupted", ExitInterrupted, 130},
 	}
 
 	for _, tt := range tests {
@@ -59,6 +62,7 @@ func TestErrorExitCode(t *testing.T) {
 		{CodeNetwork, 6},
 		{CodeAPI, 7},
 		{CodeAmbiguous, 8},
+		{CodeInterrupted, 130},
 		{"a_code_from_the_future", 7},
 	}
 
@@ -534,6 +538,13 @@ func TestPrintErrorHumanShowsControlCharactersAsEscapes(t *testing.T) {
 // A spreadsheet runs a cell starting with =, +, -, or @ (or a tab or CR
 // before one) as a formula, and RSVP names come from the public. A leading
 // ' makes the cell text.
+// Visible is visible for one line of text pcal prints itself, such as a
+// warning that quotes the server: control characters become escapes.
+func TestVisible(t *testing.T) {
+	require.Equal(t, `couldn't revoke (\x1b]0;pwned\a): Bad Gateway\n`, Visible("couldn't revoke (\x1b]0;pwned\a): Bad Gateway\n"))
+	require.Equal(t, "plain text", Visible("plain text"))
+}
+
 func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
 	p, out, _ := newTestPrinter(t, Options{CSV: true})
 

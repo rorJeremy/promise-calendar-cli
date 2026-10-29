@@ -282,6 +282,43 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+// EnvToken is the one reading of PCAL_TOKEN: Resolve uses it, and the
+// logins use it to refuse to store a token PCAL_TOKEN would shadow.
+func TestEnvToken(t *testing.T) {
+	tests := []struct {
+		name string
+		vars map[string]string
+		want string
+	}{
+		{"unset", nil, ""},
+		{"set", map[string]string{"PCAL_TOKEN": "pcal_abc"}, "pcal_abc"},
+		{"trimmed", map[string]string{"PCAL_TOKEN": " pcal_abc\n"}, "pcal_abc"},
+		{"only whitespace counts as unset", map[string]string{"PCAL_TOKEN": " \n"}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, EnvToken(env(tt.vars)))
+		})
+	}
+}
+
+// CheckToken is Set's check, which a login runs before it sends the token
+// anywhere: a token with a control character inside can't go in a header.
+// The error never quotes the token.
+func TestCheckToken(t *testing.T) {
+	require.NoError(t, CheckToken("pcal_0123abc"))
+
+	for _, token := range []string{"pcal_abc\ndef", "pcal_abc\x1b[0m", "pcal_\x7f", "\x1b[2Jpcal_abc"} {
+		err := CheckToken(token)
+		var e *output.Error
+		require.ErrorAs(t, err, &e, "%q", token)
+		require.Equal(t, output.CodeUsage, e.Code)
+		require.Equal(t, "the token contains a control character, such as a line break inside it", e.Message)
+		require.NotContains(t, e.Error(), "pcal_")
+	}
+}
+
 func TestResolveWithNothing(t *testing.T) {
 	keyring.MockInit()
 	s, _, _ := newStore(t, nil)

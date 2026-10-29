@@ -5,7 +5,9 @@
   then audited against primary sources (Gate 1b, 2026-10-27). The Phase 1–5
   code was audited (Gate 2b, 2026-10-27) and its findings fixed (Gate 2c,
   2026-10-28); Jeremy's decisions from that audit are recorded below
-  (Storage, Precedence, Output) and in the plan's header.
+  (Storage, Precedence, Output) and in the plan's header, as are his Gate 3
+  decisions on login and logout (Auth) and input parsing (Input
+  conveniences), 2026-10-28.
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -25,7 +27,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Decision | Choice |
 |---|---|
 | Language | Go. Workload is network-bound; Go gives fast iteration, stdlib HTTP, cobra, goreleaser, and a reference codebase |
-| Libraries | `spf13/cobra`, `charmbracelet/huh`, `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
+| Libraries | `spf13/cobra`, `charm.land/huh/v2` (v2, whose bubbletea doesn't query the terminal at startup; Gate 3), `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
 | Shared toolkit | Do **not** depend on `basecamp/cli` (pre-1.0, multi-account machinery we don't need). Copy its conventions |
 | Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
 | Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
@@ -137,11 +139,15 @@ their browser was sent to (the page fails to load, but the address bar has
 for 5 minutes. A pasted code is useless without the PKCE verifier, which never
 leaves this host.
 
-**Logout** (as in basecamp-cli `revoke.go`): a credential that `pcal login`
-minted is revoked with `DELETE /my/current_access_token` (best effort; a
-network failure still forgets locally and says the token may still be live).
-A token imported with `--with-token` is only forgotten locally, because the
-person who created it manages it.
+**Logout** (as in basecamp-cli `revoke.go`; `pcal auth logout` is the same
+command): a credential that `pcal login` minted is revoked with `DELETE
+/my/current_access_token` (best effort; a network failure still forgets
+locally and says the token may still be live). A token imported with
+`--with-token` is only forgotten locally, because the person who created it
+manages it. If the local forget fails (a keyring error), logout fails with
+exit 7 and says what happened on the server too (Jeremy's Gate 3 decision).
+A login that replaces a token an earlier `pcal login` minted revokes the old
+one, so logging in again leaves no stray live token (Gate 3).
 
 **Storage:** OS keyring (service `pcal`, key = base URL). The first keyring
 call in a run decides where credentials live for the rest of it (Jeremy's
@@ -160,7 +166,11 @@ can read is made `0600` again, with a warning.
 **Precedence:** flag (`--url`) > env (`PCAL_URL`, `PCAL_TOKEN`) >
 config/keyring. There is no `--token` flag: tokens never go in argv, where
 they'd land in shell history and the process list. Use `PCAL_TOKEN` or
-`--with-token`. Default URL `https://calendar.promisechurch.io`. The URL must
+`--with-token`. Both logins refuse while `PCAL_TOKEN` is set, since every later command
+would keep using it instead (Gate 3), and so does logout, which can't end
+an environment token. pcal never saves `--url` in config.json (Gate 3);
+use `--url` or `PCAL_URL` on every command for another calendar.
+Default URL `https://calendar.promisechurch.io`. The URL must
 be `https://`; `http://` is accepted only for localhost and loopback
 addresses (127.0.0.0/8, ::1), so a token is never sent unencrypted (Jeremy's
 decision at Gate 2b). It's canonicalized (lowercase host, no default port or
@@ -173,7 +183,8 @@ trailing dot), because it's also the credential key.
   `CLICOLOR_FORCE` is set (termenv's rules). Control characters in anything
   shown, server text included, appear as visible escapes (`\x1b`), since some
   of it, such as RSVP names, comes from a public form (Jeremy's decision at
-  Gate 2b).
+  Gate 2b). Prompts follow the same rule: no colors, only bold, faint,
+  and reverse (Gate 3).
 - **`--json` or stdout not a TTY:**
   ```json
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}

@@ -147,11 +147,11 @@ func TestUsageErrorInTerminal(t *testing.T) {
 }
 
 // runWithSubcommand runs pcal in-process with sub added to the command
-// tree, as Gate 3's commands will be, its stdout a pipe.
+// tree, its stdout a pipe. sub's name must not be a real command's.
 func runWithSubcommand(t *testing.T, sub *cobra.Command, args ...string) result {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}}
+	a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}, getenv: env(nil)}
 	root := newRootCmd(a)
 	root.AddCommand(sub)
 	code := execute(a, root, args)
@@ -183,65 +183,65 @@ func TestErrorClassification(t *testing.T) {
 	}{
 		{
 			name:     "a plain error from RunE is an API error",
-			sub:      &cobra.Command{Use: "whoami", RunE: runE(errors.New("reading config.json: unexpected end of JSON input"))},
-			args:     []string{"whoami"},
+			sub:      &cobra.Command{Use: "probe", RunE: runE(errors.New("reading config.json: unexpected end of JSON input"))},
+			args:     []string{"probe"},
 			wantExit: 7, wantCode: "api_error", wantMsg: "reading config.json: unexpected end of JSON input",
 		},
 		{
 			name: "not logged in is an auth error",
-			sub: &cobra.Command{Use: "whoami", RunE: func(*cobra.Command, []string) error {
+			sub: &cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error {
 				_, err := loggedOut.Resolve("https://calendar.promisechurch.io")
 				return err
 			}},
-			args:     []string{"whoami"},
+			args:     []string{"probe"},
 			wantExit: 3, wantCode: "auth_required", wantMsg: "not logged in", wantHint: "Run `pcal login`.",
 		},
 		{
 			name:     "a plain error from PreRunE is an API error",
-			sub:      &cobra.Command{Use: "whoami", PreRunE: runE(errors.New("boom")), RunE: runE(nil)},
-			args:     []string{"whoami"},
+			sub:      &cobra.Command{Use: "probe", PreRunE: runE(errors.New("boom")), RunE: runE(nil)},
+			args:     []string{"probe"},
 			wantExit: 7, wantCode: "api_error", wantMsg: "boom",
 		},
 		{
 			name:     "a usage error from RunE gets the help line",
-			sub:      &cobra.Command{Use: "whoami", RunE: runE(output.Usagef("--to 2026-10-01 is before --from 2026-10-31"))},
-			args:     []string{"whoami"},
-			wantExit: 1, wantCode: "usage", wantMsg: "--to 2026-10-01 is before --from 2026-10-31", wantHint: "Run `pcal whoami --help` for usage.",
+			sub:      &cobra.Command{Use: "probe", RunE: runE(output.Usagef("--to 2026-10-01 is before --from 2026-10-31"))},
+			args:     []string{"probe"},
+			wantExit: 1, wantCode: "usage", wantMsg: "--to 2026-10-01 is before --from 2026-10-31", wantHint: "Run `pcal probe --help` for usage.",
 		},
 		{
 			name:     "a usage error with its own hint keeps it",
-			sub:      &cobra.Command{Use: "whoami", RunE: runE(&output.Error{Code: output.CodeUsage, Message: "PCAL_TOKEN is set", Hint: "Unset PCAL_TOKEN."})},
-			args:     []string{"whoami"},
+			sub:      &cobra.Command{Use: "probe", RunE: runE(&output.Error{Code: output.CodeUsage, Message: "PCAL_TOKEN is set", Hint: "Unset PCAL_TOKEN."})},
+			args:     []string{"probe"},
 			wantExit: 1, wantCode: "usage", wantMsg: "PCAL_TOKEN is set", wantHint: "Unset PCAL_TOKEN.",
 		},
 		{
 			name:     "a wrapped *output.Error keeps its code",
-			sub:      &cobra.Command{Use: "whoami", RunE: runE(fmt.Errorf("loading: %w", &output.Error{Code: output.CodeNotFound, Message: "not_found"}))},
-			args:     []string{"whoami"},
+			sub:      &cobra.Command{Use: "probe", RunE: runE(fmt.Errorf("loading: %w", &output.Error{Code: output.CodeNotFound, Message: "not_found"}))},
+			args:     []string{"probe"},
 			wantExit: 2, wantCode: "not_found", wantMsg: "not_found",
 		},
 		{
 			name:     "an unknown flag is a usage error",
-			sub:      &cobra.Command{Use: "whoami", RunE: runE(nil)},
-			args:     []string{"whoami", "--frobnicate"},
-			wantExit: 1, wantCode: "usage", wantMsg: "unknown flag: --frobnicate", wantHint: "Run `pcal whoami --help` for usage.",
+			sub:      &cobra.Command{Use: "probe", RunE: runE(nil)},
+			args:     []string{"probe", "--frobnicate"},
+			wantExit: 1, wantCode: "usage", wantMsg: "unknown flag: --frobnicate", wantHint: "Run `pcal probe --help` for usage.",
 		},
 		{
 			name:     "an extra argument is a usage error",
-			sub:      &cobra.Command{Use: "whoami", Args: cobra.NoArgs, RunE: runE(nil)},
-			args:     []string{"whoami", "extra"},
-			wantExit: 1, wantCode: "usage", wantMsg: `unknown command "extra" for "pcal whoami"`, wantHint: "Run `pcal whoami --help` for usage.",
+			sub:      &cobra.Command{Use: "probe", Args: cobra.NoArgs, RunE: runE(nil)},
+			args:     []string{"probe", "extra"},
+			wantExit: 1, wantCode: "usage", wantMsg: `unknown command "extra" for "pcal probe"`, wantHint: "Run `pcal probe --help` for usage.",
 		},
 		{
 			name: "a missing required flag is a usage error",
 			sub: func() *cobra.Command {
-				c := &cobra.Command{Use: "whoami", RunE: runE(nil)}
+				c := &cobra.Command{Use: "probe", RunE: runE(nil)}
 				c.Flags().String("name", "", "")
 				_ = c.MarkFlagRequired("name")
 				return c
 			}(),
-			args:     []string{"whoami"},
-			wantExit: 1, wantCode: "usage", wantMsg: `required flag(s) "name" not set`, wantHint: "Run `pcal whoami --help` for usage.",
+			args:     []string{"probe"},
+			wantExit: 1, wantCode: "usage", wantMsg: `required flag(s) "name" not set`, wantHint: "Run `pcal probe --help` for usage.",
 		},
 	}
 
@@ -298,7 +298,7 @@ func TestOutputOptionsColorFromTheEnvironment(t *testing.T) {
 			for _, key := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"} {
 				t.Setenv(key, tt.env[key])
 			}
-			a := &app{streams: Streams{OutTTY: true}}
+			a := &app{streams: Streams{OutTTY: true}, getenv: os.Getenv}
 
 			require.Equal(t, tt.wantNoColor, a.outputOptions().NoColor)
 		})
@@ -316,16 +316,17 @@ func TestUnknownCommandSuggestions(t *testing.T) {
 		arg      string
 		wantHint string
 	}{
-		{"one close name", []string{"whoami", "events"}, "whoamj", "Did you mean `pcal whoami`? Run `pcal --help` for usage."},
-		{"a prefix", []string{"whoami", "events"}, "ev", "Did you mean `pcal events`? Run `pcal --help` for usage."},
+		// pcal whoami is a real command; the others are added for the test.
+		{"one close name", []string{"events"}, "whoamj", "Did you mean `pcal whoami`? Run `pcal --help` for usage."},
+		{"a prefix", []string{"events"}, "ev", "Did you mean `pcal events`? Run `pcal --help` for usage."},
 		{"two names it starts", []string{"tags", "tokens", "events"}, "t", "Did you mean `pcal tags` or `pcal tokens`? Run `pcal --help` for usage."},
-		{"nothing close", []string{"whoami", "events"}, "frobnicate", "Run `pcal --help` for usage."},
+		{"nothing close", []string{"events"}, "frobnicate", "Run `pcal --help` for usage."},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}}
+			a := &app{streams: Streams{In: strings.NewReader(""), Out: &stdout, Err: &stderr}, getenv: env(nil)}
 			root := newRootCmd(a)
 			for _, name := range tt.subs {
 				root.AddCommand(&cobra.Command{Use: name, RunE: runE})

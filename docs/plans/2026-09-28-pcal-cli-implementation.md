@@ -75,6 +75,38 @@ trailing dot (F7); pcal's directory and `credentials.json` are kept private
 (F8); CSV cells are guarded against formulas (F15); styling follows
 `CLICOLOR`/`TERM=dumb` as termenv does (F21); and doc fixes (F17).
 
+**Jeremy's Gate 3 decisions (2026-10-28)**, on choices Phases 6–8 left
+open, each checked against fizzy-cli (65b13a2) and basecamp-cli (8655e70):
+- Ctrl-C (or Esc) at a login prompt, or while a login waits for the
+  browser or a pasted address, cancels it: "Login canceled. Nothing was
+  stored." on stderr, exit 130, no envelope (as basecamp-cli's login,
+  `internal/commands/auth.go#loginOutcome`) (Phases 6–7).
+- `logout` whose local forget fails (a keyring error from `Delete`) is an
+  API error, exit 7, whose message also says what happened on the server
+  (Phase 6).
+- Both logins refuse while `PCAL_TOKEN` is set (exit 1), before any prompt
+  or browser, since every later command would keep using it (Phases 6–7).
+- A login that replaces a token an earlier `pcal login` minted revokes the
+  old one once the new one is stored (a failure only warns); an imported
+  token is only replaced (Phases 6–7).
+- `pcal login` and `pcal auth login` are one command, and `pcal logout`
+  and `pcal auth logout` another (as basecamp-cli's `buildLoginCmd` and
+  `buildLogoutCmd`) (Phases 6–7).
+- pcal never saves `--url` in config.json; after a login with `--url`, a
+  note says other commands need it too (Phase 6).
+- A time that doesn't exist (the hour the clocks skip in spring) is exit 1;
+  a time that happens twice (the hour repeated in fall) is the first one
+  (Phase 8).
+- `--repeat` accepts a small grammar around the listed forms (Phase 8).
+- At the Gate 3 review: huh v2.0.3 (`charm.land/huh/v2`) instead of v1.0.0.
+  huh v1 pulls in bubbletea v1, whose package `init()` asks the terminal for
+  its background color whenever stdout is a terminal (bubbletea v1.3.6
+  `tea_init.go:21`), and termenv waits up to 5 seconds for the answer:
+  every pcal command took 5 s longer on a pty that answers nothing (real
+  terminals answer at once). bubbletea v2 has no such init. Prompts use a
+  theme with no colors (bold, faint, reverse), so they read on light and
+  dark backgrounds alike, as pcal's other output does (Phase 6).
+
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
 `mise exec -- make check` green before its one commit. Commit messages carry
@@ -421,32 +453,71 @@ Commit: "Pin API contract with golden JSON".
   basecamp-cli `auth login --with-token`). When stdin is a TTY, use a masked huh
   input; when it's piped, read everything and trim it. Empty → exit 1. Verify
   with `GET /my/identity` **before** storing (source `imported`), then print
-  "Logged in as Admin (write)". 401 → exit 3, nothing stored. A positional
-  token argument → exit 1 with the hint `echo … | pcal auth login --with-token`.
-- `internal/prompt` (huh v1.0.0: `NewInput().EchoMode(EchoModePassword)`,
+  "Logged in as Admin User (write)". 401 → exit 3, nothing stored. A
+  positional token argument → exit 1 with the hint `echo … | pcal auth login
+  --with-token`, and the error never repeats the token (basecamp-cli's
+  `cobra.NoArgs` does). `PCAL_TOKEN` set → exit 1 before reading anything
+  (Gate 3). Ctrl-C or Esc at the prompt → exit 130 (Gate 3). Replacing a
+  token `pcal login` minted revokes it (Gate 3). After a login with `--url`,
+  a note says pcal doesn't save it (Gate 3).
+- `pcal auth` is the first group command. cobra shows help (exit 0) for any
+  word after a command it can't run, before checking arguments (cobra
+  1.10.2 `command.go:955`), so a group runs to show help and its `Args` is
+  the root's `unknownCommand`: `pcal auth frobnicate` is exit 1, with
+  suggestions. No subcommand defines a `PersistentPreRunE`, which would
+  replace the root's.
+- `internal/prompt` (huh v2.0.3, `charm.land/huh/v2`, not v1.0.0; see the
+  header's Gate 3 decisions: `NewInput().EchoMode(EchoModePassword)`,
   `NewConfirm`). For accessibility (found at Gate 1b; accepted 2026-10-27),
   every form honors `ACCESSIBLE` (non-empty → `form.WithAccessible(true)`,
   the switch huh's README recommends), which swaps the redrawing TUI for
-  plain prompts a screen reader can follow. Tests drive forms the same way, with
-  `WithAccessible(true)`, `WithInput`, and `WithOutput`, so prompt code is
-  tested without a TTY.
+  plain prompts a screen reader can follow. Prompts draw on stderr, in a
+  theme with no colors: huh's base theme with bold, faint, and reverse only,
+  help line included. huh quits only on Ctrl-C (`keymap.go:109`); pcal adds
+  Esc, as basecamp-cli does. Tests drive the drawn form with `WithInput`
+  keystrokes (`\r` is Enter, `\x03` Ctrl-C) and accessible confirms with
+  plain text lines; bubbletea v2 draws into a buffer only when given a
+  window size and a color profile, which tests pass as program options
+  (`WithProgramOptions` replaces the options `WithInput` added, so it goes
+  first). An accessible *password* field reads the terminal through its
+  file descriptor and, given any other reader, answers "" without a prompt
+  (`field_input.go`), so it's checked in a real pty instead, and `Password`
+  refuses a non-terminal there. In accessible mode huh drops every field
+  error (`form.go#runAccessible`), so Ctrl-C reaches pcal only as SIGINT:
+  logins catch it, and a canceled masked prompt puts the terminal's echo
+  back.
 - `auth status`: URL, user, permission, and credential source (keyring / file /
-  env). Not logged in → exit 3.
-- `whoami`: identity JSON/card. Every `/my/identity` call (`whoami`, both
-  logins) caches `time_zone` in config. A command that converts times
-  (Phases 10–12) and finds no cached zone, e.g. with only `PCAL_TOKEN` set,
-  calls `/my/identity` first and caches it.
-- `logout` (basecamp-cli `revoke.go#LogoutCredential` semantics):
+  env). Not logged in → exit 3. It calls `/my/identity`, so it also checks
+  the token (basecamp-cli's and fizzy-cli's are local only).
+- `whoami`: identity JSON/card. Every `/my/identity` call (`whoami`, `auth
+  status`, both logins) caches `time_zone` in config. A command that
+  converts times (Phases 10–12) and finds no cached zone, e.g. with only
+  `PCAL_TOKEN` set, calls `/my/identity` first and caches it. A rejected
+  `PCAL_TOKEN` gets a hint about it, since `pcal login` can't fix that.
+- `--verbose` is wired to `client.Options.Verbose` (stderr).
+- `logout` (basecamp-cli `revoke.go#LogoutCredential` semantics; `pcal auth
+  logout` is the same command):
   - source `browser` → `DELETE /my/current_access_token`. 204 or 401 (already
     gone) → "Logged out; token revoked". This works for a read token too (the
     server skips the read-only check on this one route). Network error or 5xx → still forget
-    locally, and warn "couldn't revoke; it may still be live — revoke at
-    /my/access_tokens". Exit 0 either way, since the local credential is gone.
-  - source `imported` → forget locally only, with the hint "this token is still
+    locally, and warn "couldn't revoke …; it may still be live, so revoke it
+    at /my/access_tokens". Exit 0 either way, since the local credential is gone.
+  - source `imported` → forget locally only, with "That token is still
     valid; revoke it at /my/access_tokens or with `pcal tokens revoke ID`".
-  - `PCAL_TOKEN` set → exit 1 "logged in via PCAL_TOKEN; unset it".
+  - `PCAL_TOKEN` set → exit 1 "logged in via PCAL_TOKEN, which pcal can't log
+    out of".
   - nothing stored → exit 0, "Not logged in".
+  - The local forget fails (since Gate 2c, `Store.Delete` returns a keyring
+    error, after removing any file copy) → exit 7, and the message says
+    what happened on the server first ("revoked the token on the server,
+    but couldn't forget it here: …"), keeping the store's hint (Gate 3).
   - Red tests cover each branch (the fake server records the DELETE).
+- Test seams: `Streams.InTTY`; `app.getenv` (the environment, injected, so
+  tests never set process variables); a credential-store interface, so a
+  test can make `Delete` fail after `Get` worked; an injectable Ctrl-C
+  context; and a `TestMain` in `commands` that installs go-keyring's mock
+  and points `HOME` at a temporary directory. The mock is a package-global
+  map without a lock, so those tests don't run in parallel.
 
 Commit: "Add token login, status, whoami, logout".
 

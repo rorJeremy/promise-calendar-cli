@@ -18,6 +18,10 @@ const (
 	ExitNetwork   = 6 // the server couldn't be reached, or timed out
 	ExitAPI       = 7 // a server error (5xx) or any other unexpected failure
 	ExitAmbiguous = 8 // a title matches more than one event
+	// ExitInterrupted is 128 + SIGINT: the person pressed Ctrl-C (or Esc at
+	// a prompt) to cancel, as in basecamp-cli. It's not a failure, so pcal
+	// prints a line saying so instead of an error.
+	ExitInterrupted = 130
 )
 
 // Error codes, the "code" of the JSON error envelope. Each maps to one exit
@@ -34,6 +38,10 @@ const (
 	CodeNetwork      = "network"
 	CodeAPI          = "api_error"
 	CodeAmbiguous    = "ambiguous"
+	// CodeInterrupted marks a run the person canceled. The command has
+	// nothing to report, so Message is printed alone on stderr, without the
+	// "Error:" prefix or the JSON envelope.
+	CodeInterrupted = "interrupted"
 )
 
 // ExitCodeFor returns the exit code for an error code. An unknown code is
@@ -54,6 +62,8 @@ func ExitCodeFor(code string) int {
 		return ExitNetwork
 	case CodeAmbiguous:
 		return ExitAmbiguous
+	case CodeInterrupted:
+		return ExitInterrupted
 	default:
 		return ExitAPI
 	}

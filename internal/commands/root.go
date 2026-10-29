@@ -3,6 +3,7 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/rorJeremy/promise-calendar-cli/internal/client"
 	"github.com/rorJeremy/promise-calendar-cli/internal/output"
 )
 
@@ -24,6 +26,9 @@ type Streams struct {
 	// OutTTY reports whether Out is a terminal, which picks human output
 	// over JSON. Execute detects it; tests set it.
 	OutTTY bool
+	// InTTY reports whether In is a terminal, where pcal can prompt.
+	// Execute detects it; tests set it.
+	InTTY bool
 }
 
 // globalOptions holds the persistent flags every command shares, plus
@@ -45,6 +50,19 @@ type app struct {
 	// printer renders results and errors. The root's PersistentPreRunE sets
 	// it once the flags are parsed.
 	printer *output.Printer
+	// getenv reads the environment: os.Getenv, or a map in tests.
+	getenv func(string) string
+
+	// The rest are for tests; the zero value is production.
+
+	// store, when set, is the credential store to use instead of the one in
+	// pcal's config directory.
+	store credentialStore
+	// interrupt, when set, replaces catching Ctrl-C (SIGINT) as the end of a
+	// login's waits.
+	interrupt func(context.Context) (context.Context, context.CancelFunc)
+	// clientOptions are passed to every client (shorter timeouts in tests).
+	clientOptions client.Options
 }
 
 // Execute runs pcal with the process's arguments and standard streams and
@@ -55,6 +73,7 @@ func Execute() int {
 		Out:    os.Stdout,
 		Err:    os.Stderr,
 		OutTTY: isTerminal(os.Stdout),
+		InTTY:  isTerminal(os.Stdin),
 	})
 }
 
@@ -66,7 +85,7 @@ func isTerminal(f *os.File) bool {
 // Run runs pcal with args (not including the program name) and returns the
 // exit code. Every run builds a fresh command tree, so runs share no state.
 func Run(args []string, streams Streams) int {
-	a := &app{streams: streams}
+	a := &app{streams: streams, getenv: os.Getenv}
 	return execute(a, newRootCmd(a), args)
 }
 
@@ -96,6 +115,13 @@ func execute(a *app, root *cobra.Command, args []string) int {
 		// flag, the wrong arguments, or a missing required flag.
 		e = &output.Error{Code: output.CodeUsage, Message: err.Error(), Cause: err}
 	}
+	if e.Code == output.CodeInterrupted {
+		// Canceling isn't a failure: one line on stderr, below whatever
+		// prompt was showing, and never the envelope (as basecamp-cli's
+		// login; its root exits 130 without rendering an error).
+		_, _ = fmt.Fprintf(a.streams.Err, "\n%s\n", e.Message)
+		return e.ExitCode()
+	}
 	if e.Code == output.CodeUsage && e.Hint == "" {
 		// Every usage error says where the usage is, as in fizzy-cli
 		// (root.go:394). A copy, so the error itself is left as it was.
@@ -116,8 +142,25 @@ func helpHint(cmd *cobra.Command) string {
 	return fmt.Sprintf("Run `%s --help` for usage.", path)
 }
 
-// unknownCommand is the root's Args. pcal takes no arguments of its own, so
-// a stray word is an unknown command. cobra.NoArgs says so but suggests
+// newGroupCmd returns a command that only groups subcommands, such as
+// `pcal auth`. cobra shows help (exit 0) for any word after a command it
+// can't run, before checking arguments (cobra 1.10.2 command.go:955), so a
+// group runs to show help, like the root, and its Args is unknownCommand,
+// which needs SuggestionsMinimumDistance set to suggest anything.
+func newGroupCmd(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:                        use,
+		Short:                      short,
+		Args:                       unknownCommand,
+		SuggestionsMinimumDistance: 2,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+}
+
+// unknownCommand is the Args of the root and of every group. They take no
+// arguments of their own, so a stray word is an unknown command. cobra.NoArgs says so but suggests
 // nothing, and once the root has subcommands, cobra's own check (legacyArgs,
 // used only when Args is nil) puts its suggestions in the message across
 // several lines. Here they go in the hint, so the message stays one line:
@@ -188,7 +231,7 @@ func (a *app) outputOptions() output.Options {
 		JQ:      a.flags.jq,
 		CSV:     a.flags.csv,
 		TTY:     a.streams.OutTTY,
-		NoColor: colorDisabled(os.Getenv),
+		NoColor: colorDisabled(a.getenv),
 	}
 }
 
@@ -261,5 +304,10 @@ func newRootCmd(a *app) *cobra.Command {
 	flags.BoolVar(&a.flags.verbose, "verbose", false, "log each request and response status to stderr")
 	_ = flags.MarkHidden("verbose")
 
+	root.AddCommand(
+		newAuthCmd(a),
+		newLogoutCmd(a, "logout"),
+		newWhoamiCmd(a),
+	)
 	return root
 }
