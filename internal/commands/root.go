@@ -136,8 +136,24 @@ func (a *app) outputOptions() output.Options {
 		JQ:      a.flags.jq,
 		CSV:     a.flags.csv,
 		TTY:     a.streams.OutTTY,
-		NoColor: os.Getenv("NO_COLOR") != "",
+		NoColor: colorDisabled(os.Getenv),
 	}
+}
+
+// colorDisabled reports whether the environment turns styling off, by the
+// rules termenv 0.16.0 follows (EnvNoColor, and EnvColorProfile with its
+// Unix ColorProfile): NO_COLOR set to anything; otherwise CLICOLOR=0 or
+// TERM=dumb, unless CLICOLOR_FORCE is set to something other than "0".
+// CLICOLOR_FORCE can't add styling where there's no terminal: without one,
+// pcal prints JSON or CSV, which have none.
+func colorDisabled(getenv func(string) string) bool {
+	if getenv("NO_COLOR") != "" {
+		return true
+	}
+	if forced := getenv("CLICOLOR_FORCE"); forced != "" && forced != "0" {
+		return false
+	}
+	return getenv("CLICOLOR") == "0" || getenv("TERM") == "dumb"
 }
 
 // errorPrinter returns the printer to report a failed run with: the run's

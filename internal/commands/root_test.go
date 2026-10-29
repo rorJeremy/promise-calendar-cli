@@ -258,3 +258,36 @@ func TestRunWithNilArgsIgnoresTheProcessArguments(t *testing.T) {
 	require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
 	require.Contains(t, r.stdout, "Usage:")
 }
+
+// Styling (bold, nothing else) follows the environment the way termenv
+// does: NO_COLOR, CLICOLOR=0, and TERM=dumb turn it off, CLICOLOR_FORCE
+// overrides the last two, and NO_COLOR beats CLICOLOR_FORCE.
+func TestOutputOptionsColorFromTheEnvironment(t *testing.T) {
+	tests := []struct {
+		name        string
+		env         map[string]string
+		wantNoColor bool
+	}{
+		{"nothing set", nil, false},
+		{"NO_COLOR", map[string]string{"NO_COLOR": "1"}, true},
+		{"an empty NO_COLOR counts as unset", map[string]string{"NO_COLOR": ""}, false},
+		{"CLICOLOR=0", map[string]string{"CLICOLOR": "0"}, true},
+		{"CLICOLOR=1", map[string]string{"CLICOLOR": "1"}, false},
+		{"CLICOLOR_FORCE overrides CLICOLOR=0", map[string]string{"CLICOLOR": "0", "CLICOLOR_FORCE": "1"}, false},
+		{"CLICOLOR_FORCE=0 doesn't", map[string]string{"CLICOLOR": "0", "CLICOLOR_FORCE": "0"}, true},
+		{"TERM=dumb", map[string]string{"TERM": "dumb"}, true},
+		{"CLICOLOR_FORCE overrides TERM=dumb", map[string]string{"TERM": "dumb", "CLICOLOR_FORCE": "1"}, false},
+		{"NO_COLOR beats CLICOLOR_FORCE", map[string]string{"NO_COLOR": "1", "CLICOLOR_FORCE": "1"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, key := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"} {
+				t.Setenv(key, tt.env[key])
+			}
+			a := &app{streams: Streams{OutTTY: true}}
+
+			require.Equal(t, tt.wantNoColor, a.outputOptions().NoColor)
+		})
+	}
+}

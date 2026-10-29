@@ -13,7 +13,10 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
@@ -42,7 +45,7 @@ type Options struct {
 	JQ      string // --jq expression; implies JSON, or filters the bare data with --quiet
 	CSV     bool   // --csv; only list commands define it
 	TTY     bool   // stdout is a terminal
-	NoColor bool   // NO_COLOR is set: no styling even in a terminal
+	NoColor bool   // the environment turns styling off (NO_COLOR, CLICOLOR=0, TERM=dumb), even in a terminal
 }
 
 // Result is what a command produced. Data is what scripts see; Table and
@@ -123,7 +126,8 @@ func New(out, errOut io.Writer, opts Options) (*Printer, error) {
 	}
 
 	// Styling is bold text only, so color never carries meaning. Without a
-	// terminal, or with NO_COLOR, the Ascii profile drops every escape code.
+	// terminal, or when the environment turns styling off (NoColor), the
+	// Ascii profile drops every escape code.
 	renderer := lipgloss.NewRenderer(out)
 	if opts.TTY && !opts.NoColor {
 		renderer.SetColorProfile(termenv.ANSI)
@@ -277,40 +281,113 @@ func (p *Printer) runJQ(v any) error {
 	}
 }
 
-// printCSV writes a table as CSV, headers first.
+// printCSV writes a table as CSV, headers first, with every cell guarded
+// against spreadsheet formulas (see csvCell).
 func (p *Printer) printCSV(t *Table) error {
 	w := csv.NewWriter(p.out)
-	if err := w.Write(t.Headers); err != nil {
+	if err := w.Write(csvRow(t.Headers)); err != nil {
 		return err
 	}
-	return w.WriteAll(t.Rows)
+	for _, row := range t.Rows {
+		if err := w.Write(csvRow(row)); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+// csvRow returns row with each cell made safe by csvCell.
+func csvRow(row []string) []string {
+	safe := make([]string, len(row))
+	for i, cell := range row {
+		safe[i] = csvCell(cell)
+	}
+	return safe
+}
+
+// csvCell prefixes a cell that a spreadsheet would run as a formula (one
+// starting with =, +, -, @, a tab, or a carriage return) with ', which
+// makes it text, as OWASP's CSV injection guidance says. RSVP names come
+// from the public, so `rsvps list --csv` could otherwise carry a formula
+// into a staff member's spreadsheet.
+func csvCell(cell string) string {
+	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+		return "'" + cell
+	}
+	return cell
 }
 
 // printHuman writes a table under its summary, a card, the summary alone,
-// or, when nothing else renders the data, the data as indented JSON.
+// or, when nothing else renders the data, the data as indented JSON. Every
+// string goes through visible first, so no control character reaches the
+// terminal.
 func (p *Printer) printHuman(r Result) error {
 	var b strings.Builder
+	summary := visible(r.Summary, false)
 	switch {
 	case r.Table != nil && len(r.Table.Rows) == 0:
-		if r.Summary == "" {
+		if summary == "" {
 			b.WriteString("No results.\n")
 		} else {
-			b.WriteString(r.Summary + "\n")
+			b.WriteString(summary + "\n")
 		}
 	case r.Table != nil:
-		if r.Summary != "" {
-			b.WriteString(r.Summary + "\n\n")
+		if summary != "" {
+			b.WriteString(summary + "\n\n")
 		}
 		b.WriteString(p.renderTable(r.Table))
 	case r.Card != nil:
 		b.WriteString(p.renderCard(r.Card))
-	case r.Summary != "":
-		b.WriteString(r.Summary + "\n")
+	case summary != "":
+		b.WriteString(summary + "\n")
 	case r.Data != nil:
-		return writeJSON(p.out, r.Data)
+		// The JSON encoder escapes C0 controls, but not DEL or C1.
+		var data strings.Builder
+		if err := writeJSON(&data, r.Data); err != nil {
+			return err
+		}
+		b.WriteString(visible(data.String(), true))
 	}
 	_, err := io.WriteString(p.out, b.String())
 	return err
+}
+
+// visible returns s with every control character (C0, DEL, and C1) and
+// every byte that isn't UTF-8 replaced by its Go escape, such as \x1b,
+// \t, or \u009b, so text from the server can't move the cursor, retitle
+// the window, or clear a staff member's terminal. RSVP names, for one,
+// come from a public form. With keepNewlines, line breaks (\n and \r\n)
+// stay, as a card value's do; a lone \r is still shown as \r.
+func visible(s string, keepNewlines bool) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&b, "\\x%02x", s[i])
+		case keepNewlines && r == '\n':
+			b.WriteByte('\n')
+		case keepNewlines && r == '\r' && strings.HasPrefix(s[i+size:], "\n"):
+			// The \n that follows is kept on the next pass.
+		case unicode.IsControl(r):
+			quoted := strconv.QuoteRune(r)
+			b.WriteString(quoted[1 : len(quoted)-1])
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// visibleAll returns cells, each passed through visible without line breaks.
+func visibleAll(cells []string) []string {
+	shown := make([]string, len(cells))
+	for i, cell := range cells {
+		shown[i] = visible(cell, false)
+	}
+	return shown
 }
 
 // renderTable lays out columns separated by two spaces, with bold headers
@@ -318,9 +395,13 @@ func (p *Printer) printHuman(r Result) error {
 func (p *Printer) renderTable(t *Table) string {
 	header := p.bold.PaddingRight(2)
 	cell := p.plain.PaddingRight(2)
+	rows := make([][]string, len(t.Rows))
+	for i, row := range t.Rows {
+		rows[i] = visibleAll(row)
+	}
 	rendered := table.New().
-		Headers(t.Headers...).
-		Rows(t.Rows...).
+		Headers(visibleAll(t.Headers)...).
+		Rows(rows...).
 		BorderTop(false).
 		BorderBottom(false).
 		BorderLeft(false).
@@ -341,17 +422,19 @@ func (p *Printer) renderTable(t *Table) string {
 // renderCard lays out labels in a bold column with each value beside its
 // label; a value's later lines line up under its first.
 func (p *Printer) renderCard(c *Card) string {
+	labels := make([]string, len(c.Fields))
 	width := 0
-	for _, f := range c.Fields {
-		width = max(width, lipgloss.Width(f.Label))
+	for i, f := range c.Fields {
+		labels[i] = visible(f.Label, false)
+		width = max(width, lipgloss.Width(labels[i]))
 	}
 	indent := strings.Repeat(" ", width+2)
 
 	var b strings.Builder
-	for _, f := range c.Fields {
-		lines := strings.Split(f.Value, "\n")
-		pad := strings.Repeat(" ", width-lipgloss.Width(f.Label)+2)
-		b.WriteString(p.bold.Render(f.Label) + pad + lines[0] + "\n")
+	for i, f := range c.Fields {
+		lines := strings.Split(visible(f.Value, true), "\n")
+		pad := strings.Repeat(" ", width-lipgloss.Width(labels[i])+2)
+		b.WriteString(p.bold.Render(labels[i]) + pad + lines[0] + "\n")
 		for _, line := range lines[1:] {
 			b.WriteString(indent + line + "\n")
 		}
@@ -360,10 +443,11 @@ func (p *Printer) renderCard(c *Card) string {
 }
 
 // printHumanError writes "Error: <message>", then each field message, then
-// the hint, to stderr.
+// the hint, to stderr, each through visible: a message or field can quote
+// the server.
 func (p *Printer) printHumanError(e *Error) {
 	var b strings.Builder
-	b.WriteString("Error: " + e.Message + "\n")
+	b.WriteString("Error: " + visible(e.Message, false) + "\n")
 
 	names := make([]string, 0, len(e.Fields))
 	for name := range e.Fields {
@@ -372,12 +456,12 @@ func (p *Printer) printHumanError(e *Error) {
 	sort.Strings(names)
 	for _, name := range names {
 		for _, msg := range e.Fields[name] {
-			b.WriteString("  " + name + ": " + msg + "\n")
+			b.WriteString("  " + visible(name, false) + ": " + visible(msg, false) + "\n")
 		}
 	}
 
 	if e.Hint != "" {
-		b.WriteString(e.Hint + "\n")
+		b.WriteString(visible(e.Hint, false) + "\n")
 	}
 	_, _ = io.WriteString(p.errOut, b.String())
 }

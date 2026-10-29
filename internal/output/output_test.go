@@ -457,3 +457,97 @@ func TestErrorJSONShape(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"code":"validation","message":"Title can't be blank","fields":{"title":["can't be blank"],"occurs_on":["can't be blank","is not a date"]},"hint":"Pass --title and --date."}`, string(b))
 }
+
+// evil is text from the public RSVP form: an OSC title change, a screen
+// clear, and a C1 CSI.
+const evil = "Bob\x1b]0;pwned\x07\x1b[2J\u009b31m"
+
+// evilShown is evil as human output shows it.
+const evilShown = `Bob\x1b]0;pwned\a\x1b[2J\u009b31m`
+
+// Human output never sends a control character to the terminal: each is
+// shown as a Go escape. Card values keep their line breaks.
+func TestPrintHumanShowsControlCharactersAsEscapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		result Result
+		want   string
+	}{
+		{
+			name:   "a table's cells, headers, and summary",
+			result: Result{Summary: "1 RSVP " + evil, Table: &Table{Headers: []string{"Name\t"}, Rows: [][]string{{evil}}}},
+			want:   "1 RSVP " + evilShown + "\n\nName\\t\n" + evilShown + "\n",
+		},
+		{
+			name:   "a newline inside a table cell",
+			result: Result{Table: &Table{Headers: []string{"Name"}, Rows: [][]string{{"Bob\nAlice"}}}},
+			want:   "Name\nBob\\nAlice\n",
+		},
+		{
+			name:   "a card's labels and values, keeping line breaks",
+			result: Result{Card: &Card{Fields: []Field{{"Name" + "\x07", evil + "\r\nsecond\rline"}}}},
+			want:   "Name\\a  " + evilShown + "\n        second\\rline\n",
+		},
+		{
+			name:   "a summary alone",
+			result: Result{Summary: "Deleted " + evil},
+			want:   "Deleted " + evilShown + "\n",
+		},
+		{
+			name:   "the JSON fallback, whose encoder leaves DEL and C1 alone",
+			result: Result{Data: map[string]string{"name": "a\u009bb\x7fc"}},
+			want:   "{\n  \"name\": \"a\\u009bb\\x7fc\"\n}\n",
+		},
+		{
+			name:   "bytes that aren't UTF-8",
+			result: Result{Summary: "a\x9bb\xffc"},
+			want:   `a\x9bb\xffc` + "\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, out, _ := newTestPrinter(t, Options{TTY: true, NoColor: true})
+
+			require.NoError(t, p.Print(tt.result))
+			require.Equal(t, tt.want, out.String())
+		})
+	}
+}
+
+// Error text, the server's included, gets the same treatment on stderr.
+func TestPrintErrorHumanShowsControlCharactersAsEscapes(t *testing.T) {
+	p, _, errOut := newTestPrinter(t, Options{TTY: true})
+
+	p.PrintError(&Error{
+		Code:    CodeValidation,
+		Message: "Name " + evil,
+		Fields:  map[string][]string{"name\n": {evil}},
+		Hint:    "Check " + evil,
+	})
+
+	require.Equal(t, "Error: Name "+evilShown+"\n  name\\n: "+evilShown+"\nCheck "+evilShown+"\n", errOut.String())
+}
+
+// A spreadsheet runs a cell starting with =, +, -, or @ (or a tab or CR
+// before one) as a formula, and RSVP names come from the public. A leading
+// ' makes the cell text.
+func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
+	p, out, _ := newTestPrinter(t, Options{CSV: true})
+
+	require.NoError(t, p.Print(Result{Table: &Table{
+		Headers: []string{"Name", "Phone"},
+		Rows: [][]string{
+			{`=HYPERLINK("http://example.com")`, "+1 555 0100"},
+			{"@SUM(A1)", "-2"},
+			{"\tTab", "\rReturn"},
+			{"Plain", "555 0100"},
+		},
+	}}))
+
+	require.Equal(t, "Name,Phone\n"+
+		`"'=HYPERLINK(""http://example.com"")",'+1 555 0100`+"\n"+
+		"'@SUM(A1),'-2\n"+
+		"'\tTab,\"'\rReturn\"\n"+
+		"Plain,555 0100\n", out.String())
+}
