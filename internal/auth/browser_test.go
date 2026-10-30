@@ -242,7 +242,8 @@ func TestCallbackServerFailures(t *testing.T) {
 // nothing, so a stray request from another process on this computer can't
 // end the login: only the calendar's redirect carries the state, so only
 // it decides (Jeremy's Gate 3c decision; a deliberate deviation from
-// basecamp-cli, whose first callback decides, internal/auth/callback.go:98-104).
+// basecamp-cli, whose first callback decides,
+// internal/auth/callback.go:98-104).
 func TestCallbackServerIgnoresAnotherLoginsState(t *testing.T) {
 	s := startCallbackServer(t, "st")
 

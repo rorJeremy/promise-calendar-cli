@@ -206,7 +206,9 @@ func (a *app) readToken(ctx context.Context) (string, error) {
 
 // readAll reads r to the end, or until ctx ends (Ctrl-C or SIGTERM while a
 // pipe is still open). More than maxTokenBytes is a usage error, read no
-// further.
+// further. A read cut off by ctx is left blocked and would take whatever
+// comes next, so nothing may read stdin again in the same run; pcal ends
+// soon after (accepted, Jeremy's Gate 3c decision, Gate 3b F15).
 func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 	type result struct {
 		data []byte
@@ -452,7 +454,9 @@ func (a *app) pasteCallback(ctx context.Context, l browserLogin, reason string) 
 }
 
 // readLine reads one line from r, or returns ctx's error if ctx ends
-// first. A read cut off by ctx is left blocked; pcal ends soon after.
+// first. A read cut off by ctx is left blocked and would take the next
+// line, so nothing may read r (or stdin) again in the same run; pcal ends
+// soon after (accepted, Jeremy's Gate 3c decision, Gate 3b F15).
 func readLine(ctx context.Context, r *bufio.Reader) (string, error) {
 	type result struct {
 		line string
@@ -474,9 +478,15 @@ func readLine(ctx context.Context, r *bufio.Reader) (string, error) {
 	}
 }
 
-// freePort returns a port on 127.0.0.1 that's free now, for the paste
-// flow's link. Nothing listens there afterwards: the browser's redirect to
-// it is meant to fail, leaving the code in the address bar.
+// freePort returns a port on 127.0.0.1 that was free on this computer a
+// moment ago, for the paste flow's link. pcal doesn't listen there: the
+// browser's redirect to it is meant to fail, leaving the code in the
+// address bar. The browser is usually on another device, though, and
+// whatever listens on that port there gets the code. It can't get a token
+// without the verifier, which never leaves here, but redeeming the code
+// uses it up (the app takes it before checking the verifier,
+// cli_authorization.rb:40-43), and the paste then fails as "expired or
+// already used" (Gate 3b F16).
 func freePort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -295,10 +295,7 @@ func TestOutputOptionsColorFromTheEnvironment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, key := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"} {
-				t.Setenv(key, tt.env[key])
-			}
-			a := &app{streams: Streams{OutTTY: true}, getenv: os.Getenv}
+			a := &app{streams: Streams{OutTTY: true}, getenv: env(tt.env)}
 
 			require.Equal(t, tt.wantNoColor, a.outputOptions().NoColor)
 		})

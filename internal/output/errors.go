@@ -19,8 +19,10 @@ const (
 	ExitAPI       = 7 // a server error (5xx) or any other unexpected failure
 	ExitAmbiguous = 8 // a title matches more than one event
 	// ExitInterrupted is 128 + SIGINT: the person pressed Ctrl-C (or Esc at
-	// a prompt) to cancel, as in basecamp-cli. It's not a failure, so pcal
-	// prints a line saying so instead of an error.
+	// a prompt) to cancel a login, as basecamp-cli exits for a canceled
+	// login (output/codes.go; its other canceled prompts mean "no", exit 0).
+	// It's not a failure, so pcal prints a line saying so instead of an
+	// error.
 	ExitInterrupted = 130
 	// ExitTerminated is 128 + SIGTERM: whatever supervises pcal stopped a
 	// login, as basecamp-cli's ExitTerminated (output/codes.go). Like

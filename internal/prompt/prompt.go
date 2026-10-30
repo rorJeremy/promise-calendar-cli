@@ -39,9 +39,9 @@ type Prompter struct {
 	// prompts, for when pcal's output is unstyled (see theme).
 	Plain bool
 
-	// options are extra bubbletea options. Tests give a window size and a
-	// color profile, which a terminal would; without them bubbletea draws
-	// nothing into a buffer.
+	// options are extra bubbletea options. Tests give a window size, as a
+	// terminal would: without one, bubbletea draws nothing into a buffer.
+	// A color profile only keeps the styling.
 	options []tea.ProgramOption
 }
 
@@ -67,8 +67,11 @@ func (p Prompter) WithProgramOptions(opts ...tea.ProgramOption) Prompter {
 // Password asks for a secret under title without echoing it.
 func (p Prompter) Password(ctx context.Context, title string) (string, error) {
 	// huh's accessible password field reads the terminal through its file
-	// descriptor (term.ReadPassword). Given any other reader it prints
-	// nothing and answers "" (huh v2.0.3 field_input.go#RunAccessible).
+	// descriptor (term.ReadPassword). Given a reader without one it prints
+	// nothing and answers ""; given a file that isn't a terminal it prints
+	// the prompt, then answers "" (huh v2.0.3 field_input.go:452-460,
+	// internal/accessibility/accessibility.go:115-116; runAccessible drops
+	// the error, form.go:731). Either way, say why instead.
 	if p.Accessible && terminalFd(p.In) < 0 {
 		return "", errors.New("a masked prompt needs a terminal")
 	}
@@ -105,6 +108,15 @@ func (p Prompter) run(ctx context.Context, form *huh.Form) error {
 	// and ends ctx, so the form leaves them alone (Gate 3b F2).
 	// WithProgramOptions replaces bubbletea's options, so it goes before
 	// WithInput and WithOutput, which add theirs.
+	//
+	// A drawn form asks the terminal about synchronized output and Unicode
+	// (DECRQM 2026 and 2027, skipped over SSH unless TERM names one of a
+	// few terminals: bubbletea v2.0.2 tea.go:1090-1095, 953-967) and its
+	// keyboard protocol (cursed_renderer.go:389). An answer that arrives
+	// after the form has ended, as when a paste typed ahead ends it at
+	// once, is left for the next program to read: the shell may show
+	// ^[[?2026;2$y. bubbletea has no option to skip the queries, so this is
+	// accepted (Jeremy's Gate 3c decision, Gate 3b F11).
 	opts := append([]tea.ProgramOption{tea.WithoutSignalHandler()}, p.options...)
 	form = form.WithProgramOptions(opts...).WithTheme(theme(p.Plain)).
 		WithInput(p.In).WithOutput(p.Out).WithAccessible(p.Accessible).WithKeyMap(keys)
@@ -139,7 +151,8 @@ func (p Prompter) run(ctx context.Context, form *huh.Form) error {
 // (bold, faint, reverse) and no colors, like the rest of pcal's output, so
 // a prompt reads the same on a light or a dark background, whatever huh
 // learns about it (huh's default theme picks colors by the background, and
-// bubbles' help line uses light/dark colors too).
+// the help line ThemeBase keeps has bubbles' colors for a dark background,
+// whatever the background: help.New, bubbles v2.0.0 help/help.go:98).
 //
 // With plain, there are no attributes either, as pcal's own output has none
 // under NO_COLOR, CLICOLOR=0, or TERM=dumb (Jeremy's Gate 3c decision): an

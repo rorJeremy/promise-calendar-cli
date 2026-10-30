@@ -99,7 +99,9 @@ func newFakeCalendar(t *testing.T) *fakeCalendar {
 
 // The server's checks on the authorization page's parameters (app
 // 85a00a0, Cli::AuthorizationsController#valid_request? and
-// CliAuthorization::CHALLENGE_FORMAT). Anything else gets a 400 page.
+// CliAuthorization::CHALLENGE_FORMAT). Anything else gets a 400 page. The
+// fake is a little stricter than the app: a missing permission is a 400
+// here, where the app defaults it to write (authorizations_controller.rb:36).
 var (
 	serverPortFormat      = regexp.MustCompile(`\A\d{4,5}\z`)
 	serverStateFormat     = regexp.MustCompile(`\A[A-Za-z0-9_-]{1,128}\z`)
@@ -108,8 +110,8 @@ var (
 
 // authorizationPage is GET /cli/authorization/new with the person already
 // signed in and clicking f.decision at once: it checks the parameters as
-// the app does, issues the code "c0de" for the challenge, and redirects
-// the browser to pcal's callback on 127.0.0.1.
+// the app does (see above), issues the code "c0de" for the challenge, and
+// redirects the browser to pcal's callback on 127.0.0.1.
 func (f *fakeCalendar) authorizationPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	port, _ := strconv.Atoi(q.Get("port"))
@@ -148,6 +150,7 @@ func (f *fakeCalendar) grant(code, challenge string) {
 // redeem is POST /cli/token: a flat {"code","code_verifier"} body, no
 // authentication. The code is used up by any attempt, and the verifier
 // must match the challenge it was issued for (as CliAuthorization.redeem).
+// It also refuses an Authorization header, which the app ignores.
 func (f *fakeCalendar) redeem(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Code     string `json:"code"`

@@ -51,8 +51,9 @@ func (r *pausingReader) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-// drawn gives bubbletea what a terminal would, a window size and a color
-// profile, so it draws the form into a buffer.
+// drawn gives bubbletea what a terminal would: a window size, without which
+// it draws nothing into a buffer, and a color profile, which keeps the
+// styling.
 var drawn = []tea.ProgramOption{tea.WithWindowSize(80, 24), tea.WithColorProfile(colorprofile.ANSI256)}
 
 // Without ACCESSIBLE, huh draws its form and reads keys, so the input is
@@ -113,8 +114,9 @@ func TestPasswordCanceledByContext(t *testing.T) {
 }
 
 // huh's accessible password field reads the terminal itself, through its
-// file descriptor. Given anything else it prints nothing and answers "",
-// so Password says why instead.
+// file descriptor. Given a reader without one it prints nothing and
+// answers "" (and given a file that isn't a terminal, prints the prompt,
+// then answers ""), so Password says why instead.
 func TestAccessiblePasswordNeedsATerminal(t *testing.T) {
 	p := Prompter{In: strings.NewReader("pcal_secret\n"), Out: &bytes.Buffer{}, Accessible: true}
 
@@ -183,8 +185,8 @@ func TestSGRColors(t *testing.T) {
 
 // Prompts are drawn with attributes only (bold, faint, reverse), never a
 // color, like the rest of pcal's output, so they read the same on a light
-// or a dark background. huh's default theme and bubbles' help line pick
-// colors by the background.
+// or a dark background. huh's default theme picks colors by the
+// background, and bubbles' help line has colors meant for a dark one.
 func TestPromptsDrawWithoutColor(t *testing.T) {
 	var out bytes.Buffer
 	keys := &pausingReader{chunks: []string{"pcal_secret", "\r"}, pause: 300 * time.Millisecond}

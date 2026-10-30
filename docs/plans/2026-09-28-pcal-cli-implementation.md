@@ -79,8 +79,10 @@ trailing dot (F7); pcal's directory and `credentials.json` are kept private
 open, each checked against fizzy-cli (65b13a2) and basecamp-cli (8655e70):
 - Ctrl-C (or Esc) at a login prompt, or while a login waits for the
   browser or a pasted address, cancels it: "Login canceled. Nothing was
-  stored." on stderr, exit 130, no envelope (as basecamp-cli's login,
-  `internal/commands/auth.go#loginOutcome`) (Phases 6–7).
+  stored." on stderr, exit 130, no envelope (basecamp-cli's login exits 130
+  with the same line, `internal/commands/auth.go#loginOutcome`, but prints
+  it on stdout, and its root renders nothing; corrected at Gate 3c)
+  (Phases 6–7).
 - `logout` whose local forget fails (a keyring error from `Delete`) is an
   API error, exit 7, whose message also says what happened on the server
   (Phase 6).
@@ -145,6 +147,15 @@ choices the review left open:
   deviation from basecamp-cli, whose first callback decides
   (`internal/auth/callback.go:98–104`). The paste flow still fails at once
   on a wrong state, exit 3 (Phase 7).
+- F11 and F15: accepted, with a comment at each (decision 6): a drawn
+  prompt's terminal queries (DECRQM 2026/2027, the keyboard protocol) can
+  be answered after the prompt has ended, leaving the answer for the next
+  program (`prompt.go`); a read cut off by Ctrl-C stays blocked and would
+  take the next line, so nothing may read stdin again in the same run
+  (`readLine`, `readAll`).
+- F13: Gate 3's commits aren't rewritten (decision 7). Their messages'
+  mistakes are listed below; the code comments and this plan are
+  corrected.
 The other findings took the review's proposed fix. Among them: revoking
 the token a login replaced is bounded at 10 seconds and Ctrl-C stops it,
 with the usual warning either way (F8); pcal prompts only when stdin and
@@ -163,11 +174,61 @@ that catches it (F12): the ones batches 1–3 didn't already cover are the
 token login's Ctrl-C while checking the token and while a pipe is open, an
 empty answer at the prompt, `--with-token` with `--local` or
 `--no-browser`, `Close` letting a page finish, escaped notes, and
-`--repeat`'s "on". Choices the decisions didn't spell
-out: the revokes of a new token use the same 10-second bound, and a Ctrl-C
-(or SIGTERM) during the old token's revoke leaves the new login standing
-(exit 0, with the warning); a SIGTERM after the code is sent says "Login
-terminated. The new token was revoked." (or couldn't be), exit 143.
+`--repeat`'s "on". F16: the paste flow's port was free on this computer a
+moment ago, and the browser's device may differ (a comment, and Phase 7).
+
+Choices the decisions didn't spell out: the revokes of a new token use the
+same 10-second bound, and a Ctrl-C (or SIGTERM) during the old token's
+revoke leaves the new login standing (exit 0, with the warning); a SIGTERM
+after the code is sent says "Login terminated. The new token was revoked."
+(or couldn't be), exit 143.
+
+Corrections to Gate 3's commit messages and docs (F13):
+  1. 82d06d8: `TestEveryRepeatTheServerAccepts` generates 475 phrases, not
+     485, and 177 distinct rules, not 181 (184 with `TestRepeat`'s table);
+     all 184 pass the app's own concern (Gate 3b; the counts re-measured
+     at Gate 3c).
+  2. 9268ade: the x/cellbuf that lipgloss v1.1.0 pulled in was
+     `v0.0.13-0.20250311204145-2c3ea96c31dd` (f29691f `go.mod:20`), not
+     "v0.0.13"; the break with x/ansi v0.11.6 is real for it.
+  3. 9268ade (and Phase 6, `prompt.go`): bubbletea v2 draws into a buffer
+     given a window size alone; a color profile only keeps the styling.
+  4. 9268ade (and Phase 6, `prompt.go`): huh's accessible password field
+     prints nothing and answers "" for a reader without a file descriptor,
+     but for a file that isn't a terminal it prints the prompt, then
+     answers "" (`field_input.go:452–460`; `form.go:731` drops the error).
+  5. `prompt.go` and its test: the help line huh's base theme keeps has
+     bubbles' colors for a dark background whatever the background
+     (`help.New`, bubbles v2.0.0 `help/help.go:98`), not light/dark ones.
+  6. 9268ade (and Phase 6): basecamp-cli's `auth status` checks the token
+     with `--check` (`internal/commands/auth.go:78–80, 158`); only
+     fizzy-cli's is local only.
+  7. 9268ade, `output/errors.go`, and D1 above: basecamp-cli's root prints
+     nothing for a canceled login (`internal/cli/root.go:432–437`), its
+     `loginOutcome` prints the line on stdout (`auth.go:761, 886–887`), and
+     a canceled basecamp-cli prompt that isn't a login exits 0
+     (`skill.go:166`).
+  8. `auth/host.go`: basecamp-cli's `OpenBrowser` knows darwin, linux, and
+     windows only (`internal/hostutil/hostutil.go:185–197`); pcal's
+     `xdg-open` on the BSDs, Solaris, and illumos is an addition.
+  9. 2c5d962 (and Phase 7, `harness_test.go`): the fake authorization page
+     is stricter than the app's `valid_request?`: a missing permission is a
+     400 there, where the app defaults to write
+     (`authorizations_controller.rb:36`), and its `POST /cli/token` refuses
+     an Authorization header the app ignores.
+  10. 9268ade: one test did set process variables
+      (`TestOutputOptionsColorFromTheEnvironment`, `t.Setenv`); it now uses
+      the injected getenv.
+  11. 82d06d8: the embedded zone data can be shown on macOS: with
+      `sandbox-exec` hiding `/usr/share/zoneinfo` and `/var/db/timezone`, a
+      `-trimpath` probe without the `time/tzdata` import fails to load
+      America/Chicago and one with it loads it (re-checked at Gate 3c).
+  12. 9268ade: the red step's stub frame drew colors 36, 62, 212, 238,
+      239, 241 at 82d06d8, not 238, 99, 212, 36, 59 (probably measured on
+      huh v1); its "53 colored styles" holds.
+
+Also fixed: `output_test.go`'s CSV doc comment had slid onto `TestVisible`,
+and a 99-character comment line in `root.go`.
 
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
@@ -554,28 +615,32 @@ Commit: "Pin API contract with golden JSON".
   prompts only when stdin and stderr are both terminals (`Streams.ErrTTY`;
   otherwise a usage error says to pipe the token in, as basecamp-cli's
   `ErrNotInteractive`) (Gate 3c). They use a theme with no colors: huh's
-  base theme with bold, faint, and reverse only, help line included, and
-  not even those when pcal's output is unstyled (`NO_COLOR`, `CLICOLOR=0`,
-  `TERM=dumb`), so an accessible prompt then prints no escape sequence
-  (Gate 3c). The drawn form runs with `tea.WithoutSignalHandler()`: pcal
-  catches SIGINT and SIGTERM itself (Gate 3c). huh quits only on Ctrl-C (`keymap.go:109`); pcal adds
-  Esc, as basecamp-cli does. Tests drive the drawn form with `WithInput`
-  keystrokes (`\r` is Enter, `\x03` Ctrl-C) and accessible confirms with
-  plain text lines; bubbletea v2 draws into a buffer only when given a
-  window size and a color profile, which tests pass as program options
-  (`WithProgramOptions` replaces the options `WithInput` added, so it goes
-  first). An accessible *password* field reads the terminal through its
-  file descriptor and, given any other reader, answers "" without a prompt
-  (`field_input.go`), so it's checked in a real pty instead, and `Password`
-  refuses a non-terminal there. In accessible mode huh drops every field
-  error (`form.go#runAccessible`), so Ctrl-C reaches pcal only as SIGINT:
-  logins catch it, and a canceled masked prompt puts the terminal's echo
-  back. Logins catch SIGTERM too: exit 143, "Login terminated. Nothing was
-  stored." (Gate 3c; basecamp-cli's `loginContext` and `ExitTerminated`).
-  Ctrl-\ (SIGQUIT) keeps Go's default (a goroutine dump, exit 2).
+  base theme with bold, faint, and reverse only, help line included, and not
+  even those when pcal's output is unstyled (`NO_COLOR`, `CLICOLOR=0`,
+  `TERM=dumb`), so an accessible prompt then prints no escape sequence (Gate
+  3c). The drawn form runs with `tea.WithoutSignalHandler()`: pcal catches
+  SIGINT and SIGTERM itself (Gate 3c). huh quits only on Ctrl-C
+  (`keymap.go:109`); pcal adds Esc, as basecamp-cli does. Tests drive the
+  drawn form with `WithInput` keystrokes (`\r` is Enter, `\x03` Ctrl-C) and
+  accessible confirms with plain text lines; bubbletea v2 draws into a
+  buffer only when given a window size, which tests pass as a program option
+  (a color profile only keeps the styling; `WithProgramOptions` replaces the
+  options `WithInput` added, so it goes first; corrected at Gate 3c). An
+  accessible *password* field reads the terminal through its file
+  descriptor: given a reader without one it answers "" without a prompt, and
+  given a file that isn't a terminal it prints the prompt, then answers ""
+  (`field_input.go:452–460`; corrected at Gate 3c), so it's checked in a
+  real pty instead, and `Password` refuses a non-terminal there. In
+  accessible mode huh drops every field error (`form.go#runAccessible`), so
+  Ctrl-C reaches pcal only as SIGINT: logins catch it, and a canceled masked
+  prompt puts the terminal's echo back. Logins catch SIGTERM too: exit 143,
+  "Login terminated. Nothing was stored." (Gate 3c; basecamp-cli's
+  `loginContext` and `ExitTerminated`). Ctrl-\ (SIGQUIT) keeps Go's default
+  (a goroutine dump, exit 2).
 - `auth status`: URL, user, permission, and credential source (keyring / file /
   env). Not logged in → exit 3. It calls `/my/identity`, so it also checks
-  the token (basecamp-cli's and fizzy-cli's are local only).
+  the token (fizzy-cli's is local only; basecamp-cli's checks it only with
+  `--check`, corrected at Gate 3c).
 - `whoami`: identity JSON/card. Every `/my/identity` call (`whoami`, `auth
   status`, both logins) caches `time_zone` in config. A command that
   converts times (Phases 10–12) and finds no cached zone, e.g. with only
@@ -621,7 +686,9 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
 - Open `<base>/cli/authorization/new?port&state&code_challenge&device=<hostname>&permission=<write|read>`
   with `open` / `xdg-open` / `rundll32 url.dll,FileProtocolHandler` (basecamp-cli
   `hostutil.OpenBrowser`, with `.Start()`, so only a failure to launch the
-  opener counts). **Always print the URL too.**
+  opener counts; pcal also uses `xdg-open` on the BSDs, Solaris, and
+  illumos, which basecamp-cli calls unsupported). **Always print the URL
+  too.**
 - The server rejects bad parameters with a 400 **page**, never a redirect, so
   the CLI would just wait out its timeout. Send only valid ones
   (`Cli::AuthorizationsController#valid_request?`): `port` 4–5 digits in
@@ -638,19 +705,20 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
   `os.Hostname()` fails or is blank, send `device=unknown host`. The server
   truncates `device` to 60 characters and names the token "pcal on <device>".
 - Handle `/callback`: the first request with this login's state decides
-  (later ones get an "already finished" page and change nothing; other
-  paths are 404s that don't end the wait). A request with another state,
-  or none, gets a 400 page ("pcal is waiting for a different login") and
-  changes nothing, so a stray request from another process on this
-  computer can't end the login; only the calendar's redirect carries the
-  state (Gate 3c; a deliberate deviation from basecamp-cli, whose first
-  callback decides, `internal/auth/callback.go:98–104`). In the paste flow
-  a wrong state is still exit 3 "the browser's answer didn't match this
-  login" at once (the expected state is never printed). `error=access_denied` → exit 3 "authorization denied in the
-  browser". No code → exit 3. Success page: "You can close this tab". The
-  page is written before pcal acts on the answer, and the server shuts down
-  gracefully, so the browser always gets it. Timeout after 5 minutes → exit
-  3, "timed out waiting for you to approve pcal in the browser".
+  (later ones get an "already finished" page and change nothing; other paths
+  are 404s that don't end the wait). A request with another state, or none,
+  gets a 400 page ("pcal is waiting for a different login") and changes
+  nothing, so a stray request from another process on this computer can't
+  end the login; only the calendar's redirect carries the state (Gate 3c; a
+  deliberate deviation from basecamp-cli, whose first callback decides,
+  `internal/auth/callback.go:98–104`). In the paste flow a wrong state is
+  still exit 3 "the browser's answer didn't match this login" at once (the
+  expected state is never printed). `error=access_denied` → exit 3
+  "authorization denied in the browser". No code → exit 3. Success page:
+  "You can close this tab". The page is written before pcal acts on the
+  answer, and the server shuts down gracefully, so the browser always gets
+  it. Timeout after 5 minutes → exit 3, "timed out waiting for you to
+  approve pcal in the browser".
 - `POST /cli/token` with a **flat** JSON body `{"code","code_verifier"}` → 201
   `{token, permission, user{id,name}}` → `/my/identity` with the new token →
   store → revoke the token it replaced → "Logged in as <name>
@@ -691,16 +759,21 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
   macOS or Windows, which have no display variable), or `""`.
   - Remote mode (auto when headless, or `--remote`; `--local` wins over the
     detection; `--remote` + `--local` → exit 1): don't open a browser. Print
-    "Not opening a browser here (SSH session). Open this link on any device:"
-    plus the URL, then prompt "Paste the address your browser ended up on:".
-    The link's port is one that was free on 127.0.0.1; nothing listens
-    there, so the browser's redirect fails and leaves the code in the
-    address bar. Parse `code`/`state` (or `error`) from the pasted URL, or
-    just its query, with spaces or quotes around it, require a matching
-    state (exit 3 otherwise), and exchange as usual. The prompt is a plain
-    line read on stdin, not huh (huh's accessible mode has no timeouts, and
-    its drawn form hangs at EOF), and waits up to 5 minutes, matching the
-    server's code lifetime.
+    "Not opening a browser here (SSH session). Open this link on any
+    device:" plus the URL, then prompt "Paste the address your browser ended
+    up on:". The link's port was free on 127.0.0.1 on this computer a moment
+    before, and pcal doesn't listen there, so the browser's redirect is
+    meant to fail and leave the code in the address bar. The browser is
+    usually on another device, where something may listen on that port and
+    get the code: it can't get a token without the verifier, but redeeming
+    the code uses it up (the app takes it before checking the verifier,
+    `cli_authorization.rb:40–43`), and the paste then fails as "expired or
+    already used" (Gate 3b F16). Parse `code`/`state` (or `error`) from the
+    pasted URL, or just its query, with spaces or quotes around it, require
+    a matching state (exit 3 otherwise), and exchange as usual. The prompt
+    is a plain line read on stdin, not huh (huh's accessible mode has no
+    timeouts, and its drawn form hangs at EOF), and waits up to 5 minutes,
+    matching the server's code lifetime.
   - `--no-browser`: keep the local listener but don't launch a browser; just
     print the link.
   - A failed browser launch isn't a failed login: say "Couldn't open a browser.
@@ -714,8 +787,10 @@ injectable func. Paste mode: the URL is parsed (success, `error=access_denied`,
 wrong state, garbage input → re-prompt once, then exit 1). `HeadlessReason`
 table test with an injected env and GOOS. `--local` overrides the detection.
 The fake calendar's authorization page checks the parameters as the app
-does, issues a single-use code for the challenge, and redirects to the
-callback; its `POST /cli/token` checks the verifier against that challenge.
+does, a little more strictly (a missing permission is a 400; the app
+defaults it to write), issues a single-use code for the challenge, and
+redirects to the callback; its `POST /cli/token` checks the verifier
+against that challenge.
 A fake browser follows the redirect; for `--no-browser`, a failed launch,
 and the paste flow, a stderr hook plays the person, opening the printed
 link (on another device for the paste flow, pasting the address the

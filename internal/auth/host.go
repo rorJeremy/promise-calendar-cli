@@ -59,7 +59,9 @@ func OpenBrowser(target string) error {
 }
 
 // browserCommand returns the command that opens target on goos, as
-// basecamp-cli's hostutil.OpenBrowser does.
+// basecamp-cli's hostutil.OpenBrowser does on darwin, linux, and windows
+// (internal/hostutil/hostutil.go:185-197). pcal also uses xdg-open on the
+// BSDs, Solaris, and illumos, which basecamp-cli calls unsupported.
 func browserCommand(goos, target string) (string, []string, error) {
 	switch goos {
 	case "darwin":

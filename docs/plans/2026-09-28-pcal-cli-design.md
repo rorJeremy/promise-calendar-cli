@@ -7,7 +7,9 @@
   2026-10-28); Jeremy's decisions from that audit are recorded below
   (Storage, Precedence, Output) and in the plan's header, as are his Gate 3
   decisions on login and logout (Auth) and input parsing (Input
-  conveniences), 2026-10-28.
+  conveniences), 2026-10-28. The Phase 6–8 code was reviewed (Gate 3b,
+  2026-10-29) and its findings fixed (Gate 3c, 2026-10-30); those decisions
+  are in Auth, Output, the exit codes, and the plan's header.
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -27,7 +29,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Decision | Choice |
 |---|---|
 | Language | Go. Workload is network-bound; Go gives fast iteration, stdlib HTTP, cobra, goreleaser, and a reference codebase |
-| Libraries | `spf13/cobra`, `charm.land/huh/v2` (v2, whose bubbletea doesn't query the terminal at startup; Gate 3), `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
+| Libraries | `spf13/cobra`, `charm.land/huh/v2` (v2, whose bubbletea doesn't query the terminal at startup, only when a drawn prompt opens; Gate 3), `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
 | Shared toolkit | Do **not** depend on `basecamp/cli` (pre-1.0, multi-account machinery we don't need). Copy its conventions |
 | Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
 | Input | Flags for everything; huh prompts for missing required fields only when stdin and stderr are both terminals (prompts draw on stderr; Gate 3c) |
@@ -143,16 +145,16 @@ pcal version | completion {bash,zsh,fish} | skill install
    leaves a live token with no record of it (Jeremy's Gate 3c decisions,
    as basecamp-cli's `verifyAndStore` and `discardGrant`).
 
-Ctrl-C while a login waits (for the browser, a pasted address, or the
-masked `--with-token` prompt) cancels it: "Login canceled. Nothing was
-stored." and exit 130, without the JSON envelope, as basecamp-cli's login
-does (Jeremy's Gate 3 decision). A SIGTERM does the same, but says "Login
-terminated. Nothing was stored." and exits 143 (Gate 3c, as basecamp-cli's
-`ExitTerminated`). Once the code is sent, Ctrl-C doesn't cut the exchange
-off, since the server may already have minted the token; a token that
-comes back is revoked, and the message says whether that worked (Gate
-3c). Messages go to stderr, so the result on stdout can still be
-JSON.
+Ctrl-C while a login waits (for the browser, a pasted address, or the masked
+`--with-token` prompt) cancels it: "Login canceled. Nothing was stored." and
+exit 130, without the JSON envelope, as basecamp-cli's login does, though it
+prints the line on stdout (Jeremy's Gate 3 decision). A SIGTERM does the
+same, but says "Login terminated. Nothing was stored." and exits 143 (Gate
+3c, as basecamp-cli's `ExitTerminated`). Once the code is sent, Ctrl-C
+doesn't cut the exchange off, since the server may already have minted the
+token; a token that comes back is revoked, and the message says whether that
+worked (Gate 3c). Messages go to stderr, so the result on stdout can still
+be JSON.
 
 **Headless fallback** (as in basecamp-cli, `LoginOptions.defaults` +
 `readCallbackInput`): on an SSH session, with `CI` set, or on Unix without
@@ -193,15 +195,15 @@ can read is made `0600` again, with a warning.
 config/keyring. There is no `--token` flag: tokens never go in argv, where
 they'd land in shell history and the process list. Use `PCAL_TOKEN` or
 `--with-token`. One typed into argv anyway is never repeated in an error
-(Gate 3c). Both logins refuse while `PCAL_TOKEN` is set, since every later command
-would keep using it instead (Gate 3), and so does logout, which can't end
-an environment token. pcal never saves `--url` in config.json (Gate 3);
-use `--url` or `PCAL_URL` on every command for another calendar.
-Default URL `https://calendar.promisechurch.io`. The URL must
-be `https://`; `http://` is accepted only for localhost and loopback
-addresses (127.0.0.0/8, ::1), so a token is never sent unencrypted (Jeremy's
-decision at Gate 2b). It's canonicalized (lowercase host, no default port or
-trailing dot), because it's also the credential key.
+(Gate 3c). Both logins refuse while `PCAL_TOKEN` is set, since every later
+command would keep using it instead (Gate 3), and so does logout, which
+can't end an environment token. pcal never saves `--url` in config.json
+(Gate 3); use `--url` or `PCAL_URL` on every command for another calendar.
+Default URL `https://calendar.promisechurch.io`. The URL must be `https://`;
+`http://` is accepted only for localhost and loopback addresses
+(127.0.0.0/8, ::1), so a token is never sent unencrypted (Jeremy's decision
+at Gate 2b). It's canonicalized (lowercase host, no default port or trailing
+dot), because it's also the credential key.
 
 ## Output
 

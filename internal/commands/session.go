@@ -31,8 +31,9 @@ type credentialStore interface {
 // canceled confirmation in basecamp-cli is "no", exit 0).
 var errLoginCanceled = &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. Nothing was stored."}
 
-// errLoginTerminated is errLoginCanceled for a SIGTERM: pcal exits 143 (Jeremy's
-// Gate 3c decision; basecamp-cli's loginOutcome and ExitTerminated).
+// errLoginTerminated is errLoginCanceled for a SIGTERM: pcal exits 143
+// (Jeremy's Gate 3c decision; basecamp-cli's loginOutcome and
+// ExitTerminated).
 var errLoginTerminated = &output.Error{Code: output.CodeTerminated, Message: "Login terminated. Nothing was stored."}
 
 // loginStopped returns how a login that ctx, from interruptible, ended

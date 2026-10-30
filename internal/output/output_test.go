@@ -539,9 +539,6 @@ func TestPrintErrorHumanShowsControlCharactersAsEscapes(t *testing.T) {
 	require.Equal(t, "Error: Name "+evilShown+"\n  name\\n: "+evilShown+"\nCheck "+evilShown+"\n", errOut.String())
 }
 
-// A spreadsheet runs a cell starting with =, +, -, or @ (or a tab or CR
-// before one) as a formula, and RSVP names come from the public. A leading
-// ' makes the cell text.
 // Visible is visible for one line of text pcal prints itself, such as a
 // warning that quotes the server: control characters become escapes.
 func TestVisible(t *testing.T) {
@@ -549,6 +546,9 @@ func TestVisible(t *testing.T) {
 	require.Equal(t, "plain text", Visible("plain text"))
 }
 
+// A spreadsheet runs a cell starting with =, +, -, or @ (or a tab or CR
+// before one) as a formula, and RSVP names come from the public. A leading
+// ' makes the cell text.
 func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
 	p, out, _ := newTestPrinter(t, Options{CSV: true})
 

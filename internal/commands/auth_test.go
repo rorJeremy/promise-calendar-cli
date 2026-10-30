@@ -173,8 +173,9 @@ func TestPrompterFollowsTheOutputsStyling(t *testing.T) {
 }
 
 // Ctrl-C or Esc at the prompt cancels the login: a line on stderr, exit
-// 130, no envelope, nothing sent or stored (as basecamp-cli's login,
-// internal/commands/auth.go#loginOutcome).
+// 130, no envelope, nothing sent or stored (basecamp-cli's login exits 130
+// the same way, internal/commands/auth.go#loginOutcome, but prints its line
+// on stdout).
 func TestLoginWithTokenCanceledAtThePrompt(t *testing.T) {
 	tests := []struct {
 		name      string
