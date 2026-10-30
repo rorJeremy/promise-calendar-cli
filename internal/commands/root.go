@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -30,6 +31,10 @@ type Streams struct {
 	// InTTY reports whether In is a terminal, where pcal can prompt.
 	// Execute detects it; tests set it.
 	InTTY bool
+	// ErrTTY reports whether Err is a terminal. Prompts are drawn there, so
+	// pcal prompts only when In and Err both are. Execute detects it; tests
+	// set it.
+	ErrTTY bool
 }
 
 // globalOptions holds the persistent flags every command shares, plus
@@ -78,6 +83,10 @@ type app struct {
 	// revokeWait bounds revoking a token after a login (revokeTimeout when
 	// zero).
 	revokeWait time.Duration
+	// promptOptions are extra bubbletea options for prompts: tests give a
+	// window size, which a terminal would, so a drawn prompt draws into a
+	// buffer.
+	promptOptions []tea.ProgramOption
 }
 
 // Execute runs pcal with the process's arguments and standard streams and
@@ -89,6 +98,7 @@ func Execute() int {
 		Err:    os.Stderr,
 		OutTTY: isTerminal(os.Stdout),
 		InTTY:  isTerminal(os.Stdin),
+		ErrTTY: isTerminal(os.Stderr),
 	})
 }
 
@@ -130,12 +140,12 @@ func execute(a *app, root *cobra.Command, args []string) int {
 		// flag, the wrong arguments, or a missing required flag.
 		e = &output.Error{Code: output.CodeUsage, Message: err.Error(), Cause: err}
 	}
-	if e.Code == output.CodeInterrupted {
+	if e.Code == output.CodeInterrupted || e.Code == output.CodeTerminated {
 		// Canceling isn't a failure: one line on stderr, below whatever
 		// prompt was showing, and never the envelope (as basecamp-cli's
-		// login; its root exits 130 without rendering an error). The line
-		// may quote the server, as when a canceled login couldn't revoke
-		// its new token.
+		// login; its root exits 130 or 143 without rendering an error). The
+		// line may quote the server, as when a canceled login couldn't
+		// revoke its new token.
 		_, _ = fmt.Fprintf(a.streams.Err, "\n%s\n", output.Visible(e.Message))
 		return e.ExitCode()
 	}

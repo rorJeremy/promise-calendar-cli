@@ -35,6 +35,9 @@ type Prompter struct {
 	// Accessible swaps huh's redrawing forms for plain prompts that a
 	// screen reader can follow.
 	Accessible bool
+	// Plain drops even the attributes (bold, faint, reverse) from the
+	// prompts, for when pcal's output is unstyled (see theme).
+	Plain bool
 
 	// options are extra bubbletea options. Tests give a window size and a
 	// color profile, which a terminal would; without them bubbletea draws
@@ -42,11 +45,23 @@ type Prompter struct {
 	options []tea.ProgramOption
 }
 
-// New returns a Prompter for in and out that's Accessible when the
-// ACCESSIBLE environment variable is set to anything, the switch huh's
-// README recommends.
-func New(in io.Reader, out io.Writer, getenv func(string) string) Prompter {
-	return Prompter{In: in, Out: out, Accessible: getenv("ACCESSIBLE") != ""}
+// New returns a Prompter for in and out, Plain when plain. It's Accessible
+// when the ACCESSIBLE environment variable is set to anything, the switch
+// huh's README recommends, or on a dumb terminal (TERM=dumb), where a
+// redrawing form can't work: huh falls back to accessible prompts there
+// itself (huh v2.0.3 form.go:129-131), which run's WithAccessible would
+// otherwise undo (Gate 3c).
+func New(in io.Reader, out io.Writer, getenv func(string) string, plain bool) Prompter {
+	accessible := getenv("ACCESSIBLE") != "" || getenv("TERM") == "dumb"
+	return Prompter{In: in, Out: out, Accessible: accessible, Plain: plain}
+}
+
+// WithProgramOptions returns p with extra bubbletea options for its drawn
+// prompts. Tests give a window size, as a terminal would; without one,
+// bubbletea draws nothing into a buffer.
+func (p Prompter) WithProgramOptions(opts ...tea.ProgramOption) Prompter {
+	p.options = opts
+	return p
 }
 
 // Password asks for a secret under title without echoing it.
@@ -78,15 +93,20 @@ func (p Prompter) Confirm(ctx context.Context, title string, def bool) (bool, er
 
 // run shows form and waits for an answer. Ctrl-C or Esc in the form, or
 // ctx ending (pcal catches Ctrl-C as SIGINT, which is how it arrives at an
-// accessible prompt), is ErrCanceled.
+// accessible prompt, and SIGTERM), is ErrCanceled.
 func (p Prompter) run(ctx context.Context, form *huh.Form) error {
 	keys := huh.NewDefaultKeyMap()
 	// huh quits only on Ctrl-C; basecamp-cli adds Esc too
 	// (internal/tui/forms.go#escKeyMap).
 	keys.Quit.SetKeys("ctrl+c", "esc")
+	// bubbletea's own signal handler turns a SIGTERM into a quit, which huh
+	// reports as an answer: whatever was typed so far (bubbletea v2.0.2
+	// tea.go:651-655, huh form.go:708-717). pcal catches the signals itself
+	// and ends ctx, so the form leaves them alone (Gate 3b F2).
 	// WithProgramOptions replaces bubbletea's options, so it goes before
 	// WithInput and WithOutput, which add theirs.
-	form = form.WithProgramOptions(p.options...).WithTheme(theme()).
+	opts := append([]tea.ProgramOption{tea.WithoutSignalHandler()}, p.options...)
+	form = form.WithProgramOptions(opts...).WithTheme(theme(p.Plain)).
 		WithInput(p.In).WithOutput(p.Out).WithAccessible(p.Accessible).WithKeyMap(keys)
 
 	restore := saveTerminal(p.In)
@@ -120,18 +140,27 @@ func (p Prompter) run(ctx context.Context, form *huh.Form) error {
 // a prompt reads the same on a light or a dark background, whatever huh
 // learns about it (huh's default theme picks colors by the background, and
 // bubbles' help line uses light/dark colors too).
-func theme() huh.Theme {
+//
+// With plain, there are no attributes either, as pcal's own output has none
+// under NO_COLOR, CLICOLOR=0, or TERM=dumb (Jeremy's Gate 3c decision): an
+// accessible prompt prints no escape sequence at all. A drawn one still
+// shows the cursor as a reverse cell, which bubbles draws whatever the
+// theme (bubbles v2.0.0 cursor/cursor.go:240). A drawn Confirm's two
+// buttons then look alike, so Phase 9 has to mark the chosen one some
+// other way before it uses Confirm.
+func theme(plain bool) huh.Theme {
+	styled := !plain
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		t := huh.ThemeBase(isDark)
-		bold := lipgloss.NewStyle().Bold(true)
-		faint := lipgloss.NewStyle().Faint(true)
+		bold := lipgloss.NewStyle().Bold(styled)
+		faint := lipgloss.NewStyle().Faint(styled)
 
 		t.Focused.Title = bold
 		t.Focused.NoteTitle = bold
 		t.Focused.Description = faint
-		t.Focused.ErrorIndicator = t.Focused.ErrorIndicator.Bold(true)
-		t.Focused.ErrorMessage = t.Focused.ErrorMessage.Bold(true)
-		t.Focused.FocusedButton = t.Focused.FocusedButton.UnsetForeground().UnsetBackground().Reverse(true).Bold(true)
+		t.Focused.ErrorIndicator = t.Focused.ErrorIndicator.Bold(styled)
+		t.Focused.ErrorMessage = t.Focused.ErrorMessage.Bold(styled)
+		t.Focused.FocusedButton = t.Focused.FocusedButton.UnsetForeground().UnsetBackground().Reverse(styled).Bold(styled)
 		t.Focused.BlurredButton = t.Focused.BlurredButton.UnsetForeground().UnsetBackground()
 		t.Focused.TextInput.Placeholder = faint
 

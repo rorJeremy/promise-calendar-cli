@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -98,18 +99,77 @@ func TestLoginWithTokenTrimsWhitespace(t *testing.T) {
 }
 
 // Masked: huh draws the field with * for each character. Without
-// ACCESSIBLE the input is keystrokes, so Enter is "\r".
+// ACCESSIBLE the input is keystrokes, so Enter is "\r". The keys come one
+// read at a time, as typed, and the prompt has a window size, so the form
+// is drawn while they arrive; given everything at once, huh handles the
+// keys before it draws anything, and the check below would prove nothing.
 func TestLoginWithTokenPromptsInATerminal(t *testing.T) {
 	cal := newFakeCalendar(t)
 	h := newHarness(t, cal.URL())
-	h.stdin = strings.NewReader(goodToken + "\r")
-	h.inTTY = true
+	h.stdin = &typing{chunks: []string{goodToken, "\r"}, pause: 300 * time.Millisecond}
+	h.inTTY, h.errTTY = true, true
+	h.promptOptions = drawnPrompt
 
 	r := h.run("auth", "login", "--with-token")
 
 	require.Equal(t, 0, r.code, "stdout: %s\nstderr: %q", r.stdout, r.stderr)
 	require.Equal(t, goodToken, h.stored(cal.URL()).Token)
+	require.Contains(t, r.stderr, "Paste your pcal token (it won't be shown)")
+	require.Contains(t, r.stderr, "*")
 	require.NotContains(t, r.stderr, goodToken)
+}
+
+// The masked prompt is drawn on stderr, so with stderr redirected the
+// person would see nothing while pcal waited for the token. pcal refuses
+// instead, before reading anything (Gate 3b F9; basecamp-cli's
+// tui.ErrNotInteractive).
+func TestLoginWithTokenRefusesAPromptItCantShow(t *testing.T) {
+	cal := newFakeCalendar(t)
+	h := newHarness(t, cal.URL())
+	stdin := strings.NewReader(goodToken + "\r")
+	h.stdin = stdin
+	h.inTTY = true
+
+	r := h.run("login", "--with-token")
+
+	require.Equal(t, 1, r.code, "stdout: %s", r.stdout)
+	env := decodeError(t, r.stdout)
+	require.Equal(t, "usage", env.Error.Code)
+	require.Equal(t, "stdin is a terminal but stderr isn't, so pcal can't show the prompt", env.Error.Message)
+	require.Equal(t, "Pipe the token in instead (`pcal login --with-token < token.txt`), or keep stderr on the terminal, where the prompt is drawn.", env.Error.Hint)
+	require.Equal(t, len(goodToken)+1, stdin.Len(), "stdin was read")
+	require.Empty(t, cal.requests())
+	h.requireNothingStored(cal.URL())
+}
+
+// Prompts follow pcal's own styling switches (colorDisabled): unstyled
+// output means plain prompts, and a dumb terminal means accessible ones too
+// (Gate 3c).
+func TestPrompterFollowsTheOutputsStyling(t *testing.T) {
+	tests := []struct {
+		name           string
+		env            map[string]string
+		wantPlain      bool
+		wantAccessible bool
+	}{
+		{"nothing set", nil, false, false},
+		{"NO_COLOR", map[string]string{"NO_COLOR": "1"}, true, false},
+		{"CLICOLOR=0", map[string]string{"CLICOLOR": "0"}, true, false},
+		{"TERM=dumb", map[string]string{"TERM": "dumb"}, true, true},
+		{"TERM=dumb, CLICOLOR_FORCE", map[string]string{"TERM": "dumb", "CLICOLOR_FORCE": "1"}, false, true},
+		{"ACCESSIBLE", map[string]string{"ACCESSIBLE": "1"}, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{getenv: env(tt.env)}
+
+			p := a.prompter()
+
+			require.Equal(t, tt.wantPlain, p.Plain)
+			require.Equal(t, tt.wantAccessible, p.Accessible)
+		})
+	}
 }
 
 // Ctrl-C or Esc at the prompt cancels the login: a line on stderr, exit
@@ -133,7 +193,7 @@ func TestLoginWithTokenCanceledAtThePrompt(t *testing.T) {
 			cal := newFakeCalendar(t)
 			h := newHarness(t, cal.URL())
 			h.stdin = strings.NewReader(tt.keys)
-			h.inTTY = true
+			h.inTTY, h.errTTY = true, true
 			if tt.interrupt != nil {
 				tt.interrupt(h)
 			}
@@ -316,11 +376,12 @@ func TestLoginGivesUpOnRevokingTheOldToken(t *testing.T) {
 	tests := []struct {
 		name    string
 		wait    time.Duration
-		press   bool
+		signal  func(*keyboard) bool
 		wantWhy string
 	}{
-		{"no answer", 200 * time.Millisecond, false, "no answer within 200ms"},
-		{"Ctrl-C", 5 * time.Second, true, "canceled with Ctrl-C"},
+		{"no answer", 200 * time.Millisecond, nil, "no answer within 200ms"},
+		{"Ctrl-C", 5 * time.Second, (*keyboard).press, "canceled with Ctrl-C"},
+		{"SIGTERM", 5 * time.Second, (*keyboard).terminate, "stopped by SIGTERM"},
 	}
 
 	for _, tt := range tests {
@@ -328,8 +389,8 @@ func TestLoginGivesUpOnRevokingTheOldToken(t *testing.T) {
 			cal := newFakeCalendar(t)
 			kb := newKeyboard()
 			cal.route("DELETE /my/current_access_token", func(_ http.ResponseWriter, r *http.Request) {
-				if tt.press {
-					require.True(t, kb.press(), "nothing listened for Ctrl-C during the revoke")
+				if tt.signal != nil {
+					require.True(t, tt.signal(kb), "nothing listened for the signal during the revoke")
 				}
 				<-r.Context().Done()
 			})
@@ -761,6 +822,59 @@ func TestLogoutWhenForgettingFails(t *testing.T) {
 }
 
 // --- canceling ---
+
+// SIGTERM, from whatever supervises pcal, stops a login as Ctrl-C does,
+// but exits 143 (128 + SIGTERM) and says "terminated" (Jeremy's Gate 3c
+// decision; basecamp-cli's loginContext and ExitTerminated).
+func TestLoginTerminated(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		setup func(*testing.T, *harness)
+	}{
+		{"waiting for the browser", []string{"login"}, func(_ *testing.T, h *harness) { h.browser.visit = false }},
+		{"at the paste prompt", []string{"login", "--remote"}, func(t *testing.T, h *harness) {
+			stdin, typed := io.Pipe()
+			t.Cleanup(func() { _ = typed.Close() })
+			h.stdin = stdin
+		}},
+		{"at the masked prompt", []string{"login", "--with-token"}, func(_ *testing.T, h *harness) {
+			h.inTTY, h.errTTY = true, true
+		}},
+		{"reading a pipe", []string{"login", "--with-token"}, func(t *testing.T, h *harness) {
+			stdin, typed := io.Pipe()
+			t.Cleanup(func() { _ = typed.Close() })
+			h.stdin = stdin
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			h := newHarness(t, cal.URL())
+			tt.setup(t, h)
+			h.interrupt = terminatedContext
+
+			r := h.run(tt.args...)
+
+			require.Equal(t, 143, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			require.Empty(t, r.stdout)
+			require.True(t, strings.HasSuffix(r.stderr, "\nLogin terminated. Nothing was stored.\n"), "stderr: %q", r.stderr)
+			requireNoRedeem(t, cal)
+			h.requireNothingStored(cal.URL())
+		})
+	}
+}
+
+func TestTerminatedRunPrintsALineAndExits143(t *testing.T) {
+	r := runWithSubcommand(t, &cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error {
+		return errLoginTerminated
+	}}, "probe", "--json")
+
+	require.Equal(t, 143, r.code)
+	require.Empty(t, r.stdout)
+	require.Equal(t, "\nLogin terminated. Nothing was stored.\n", r.stderr)
+}
 
 // A canceled run prints its line alone on stderr, never the envelope, and
 // exits 130, even when stdout isn't a terminal.

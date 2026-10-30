@@ -31,6 +31,9 @@ func TestExitCodes(t *testing.T) {
 		// 128 + SIGINT, as a shell reports a process Ctrl-C stopped, and as
 		// basecamp-cli exits for a canceled login (output/codes.go).
 		{"ExitInterrupted", ExitInterrupted, 130},
+		// 128 + SIGTERM, as basecamp-cli exits for a login a SIGTERM ended
+		// (output/codes.go ExitTerminated).
+		{"ExitTerminated", ExitTerminated, 143},
 	}
 
 	for _, tt := range tests {
@@ -63,6 +66,7 @@ func TestErrorExitCode(t *testing.T) {
 		{CodeAPI, 7},
 		{CodeAmbiguous, 8},
 		{CodeInterrupted, 130},
+		{CodeTerminated, 143},
 		{"a_code_from_the_future", 7},
 	}
 

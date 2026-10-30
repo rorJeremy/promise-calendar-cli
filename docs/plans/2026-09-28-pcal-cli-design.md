@@ -30,7 +30,7 @@ Modeled on [fizzy-cli](https://github.com/basecamp/fizzy-cli) and
 | Libraries | `spf13/cobra`, `charm.land/huh/v2` (v2, whose bubbletea doesn't query the terminal at startup; Gate 3), `charmbracelet/lipgloss`, `zalando/go-keyring`, `gofrs/flock` (the credentials file lock, as basecamp-cli), `itchyny/gojq`, `stretchr/testify` |
 | Shared toolkit | Do **not** depend on `basecamp/cli` (pre-1.0, multi-account machinery we don't need). Copy its conventions |
 | Login | `pcal login` browser flow (PKCE + localhost callback, paste-the-callback fallback when headless); `pcal auth login --with-token` (stdin) for CI/agents |
-| Input | Flags for everything; huh prompts for missing required fields only when stdin is a TTY |
+| Input | Flags for everything; huh prompts for missing required fields only when stdin and stderr are both terminals (prompts draw on stderr; Gate 3c) |
 | Output | Tables in a TTY; fizzy-style JSON envelope when piped or `--json` |
 | Distribution | goreleaser → GitHub Releases + `rorJeremy/homebrew-tap`; `go install` and `mise use github:…` work |
 | Dev toolchain | mise (`mise.toml` pins Go, golangci-lint, goreleaser; `mise.lock` pins their artifacts; CI uses `jdx/mise-action` with `MISE_LOCKED=1`) |
@@ -143,10 +143,12 @@ pcal version | completion {bash,zsh,fish} | skill install
 Ctrl-C while a login waits (for the browser, a pasted address, or the
 masked `--with-token` prompt) cancels it: "Login canceled. Nothing was
 stored." and exit 130, without the JSON envelope, as basecamp-cli's login
-does (Jeremy's Gate 3 decision). Once the code is sent, Ctrl-C doesn't cut
-the exchange off, since the server may already have minted the token; a
-token that comes back is revoked, and the message says whether that worked
-(Gate 3c). Messages go to stderr, so the result on stdout can still be
+does (Jeremy's Gate 3 decision). A SIGTERM does the same, but says "Login
+terminated. Nothing was stored." and exits 143 (Gate 3c, as basecamp-cli's
+`ExitTerminated`). Once the code is sent, Ctrl-C doesn't cut the exchange
+off, since the server may already have minted the token; a token that
+comes back is revoked, and the message says whether that worked (Gate
+3c). Messages go to stderr, so the result on stdout can still be
 JSON.
 
 **Headless fallback** (as in basecamp-cli, `LoginOptions.defaults` +
@@ -205,7 +207,10 @@ trailing dot), because it's also the credential key.
   shown, server text included, appear as visible escapes (`\x1b`), since some
   of it, such as RSVP names, comes from a public form (Jeremy's decision at
   Gate 2b). Prompts follow the same rule: no colors, only bold, faint,
-  and reverse (Gate 3).
+  and reverse (Gate 3), and none of those either when styling is off, so
+  an accessible prompt then prints no escape sequence (Gate 3c). With
+  `TERM=dumb` prompts are accessible (plain lines), as huh's own fallback
+  makes them (Gate 3c).
 - **`--json` or stdout not a TTY:**
   ```json
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}
@@ -250,6 +255,7 @@ exit code.
 | 7 | API / server error (5xx, unexpected) |
 | 8 | Ambiguous title match |
 | 130 | Canceled with Ctrl-C during a login (128 + SIGINT, as basecamp-cli; no envelope) |
+| 143 | Stopped by SIGTERM during a login (128 + SIGTERM, as basecamp-cli's `ExitTerminated`; no envelope; Gate 3c) |
 
 ## Testing
 

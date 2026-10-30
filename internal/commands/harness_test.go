@@ -15,9 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 
@@ -350,7 +352,10 @@ type harness struct {
 	env    map[string]string
 	stdin  io.Reader
 	inTTY  bool
+	errTTY bool
 	outTTY bool
+	// promptOptions are extra bubbletea options for the prompts.
+	promptOptions []tea.ProgramOption
 	// store, when set, replaces the credential store.
 	store credentialStore
 	// interrupt, when set, replaces catching Ctrl-C.
@@ -392,7 +397,7 @@ func (h *harness) run(args ...string) result {
 	var stdout bytes.Buffer
 	stderr := &lineWatcher{onLine: h.onStderrLine}
 	a := &app{
-		streams:       Streams{In: h.stdin, Out: &stdout, Err: stderr, OutTTY: h.outTTY, InTTY: h.inTTY},
+		streams:       Streams{In: h.stdin, Out: &stdout, Err: stderr, OutTTY: h.outTTY, InTTY: h.inTTY, ErrTTY: h.errTTY},
 		getenv:        env(h.env),
 		store:         h.store,
 		interrupt:     h.interrupt,
@@ -402,6 +407,7 @@ func (h *harness) run(args ...string) result {
 		hostname:      h.hostname,
 		loginWait:     h.loginWait,
 		revokeWait:    h.revokeWait,
+		promptOptions: h.promptOptions,
 	}
 	code := execute(a, newRootCmd(a), args)
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
@@ -467,24 +473,33 @@ func canceledContext(ctx context.Context) (context.Context, context.CancelFunc) 
 	return ctx, cancel
 }
 
-// keyboard stands in for the person pressing Ctrl-C at a moment a test
-// picks. Its interrupt is the app's interrupt seam: each context it hands
-// out listens until its stop function runs, as a signal.Notify channel
-// stays registered until signal.Stop, and press ends every context still
-// listening, as a signal reaches every registered channel.
+// terminatedContext stands in for a SIGTERM: the context a login waits on
+// is already over, and says so.
+func terminatedContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	cancel(interruption{syscall.SIGTERM})
+	return ctx, func() { cancel(nil) }
+}
+
+// keyboard stands in for the person pressing Ctrl-C, or a supervisor's
+// SIGTERM, at a moment a test picks. Its interrupt is the app's interrupt
+// seam: each context it hands out listens until its stop function runs, as
+// a signal.Notify channel stays registered until signal.Stop, and a signal
+// ends every context still listening, as it reaches every registered
+// channel.
 type keyboard struct {
 	mu        sync.Mutex
-	listening map[int]context.CancelFunc
+	listening map[int]context.CancelCauseFunc
 	next      int
 }
 
 func newKeyboard() *keyboard {
-	return &keyboard{listening: map[int]context.CancelFunc{}}
+	return &keyboard{listening: map[int]context.CancelCauseFunc{}}
 }
 
 // interrupt is the app's interrupt seam.
 func (k *keyboard) interrupt(parent context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	k.mu.Lock()
 	id := k.next
 	k.next++
@@ -494,20 +509,54 @@ func (k *keyboard) interrupt(parent context.Context) (context.Context, context.C
 		k.mu.Lock()
 		delete(k.listening, id)
 		k.mu.Unlock()
-		cancel()
+		cancel(nil)
 	}
 }
 
 // press presses Ctrl-C and reports whether anything was listening for it.
 // With nothing listening, a real Ctrl-C ends pcal the usual way.
 func (k *keyboard) press() bool {
+	return k.send(os.Interrupt)
+}
+
+// terminate sends SIGTERM, as press sends Ctrl-C.
+func (k *keyboard) terminate() bool {
+	return k.send(syscall.SIGTERM)
+}
+
+func (k *keyboard) send(sig os.Signal) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for _, cancel := range k.listening {
-		cancel()
+		cancel(interruption{sig})
 	}
 	return len(k.listening) > 0
 }
+
+// typing is a stdin that returns each chunk in its own read, pausing before
+// every chunk after the first, as a person typing at a terminal does.
+type typing struct {
+	chunks []string
+	pause  time.Duration
+	reads  int
+}
+
+func (r *typing) Read(b []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	if r.reads > 0 {
+		time.Sleep(r.pause)
+	}
+	r.reads++
+	n := copy(b, r.chunks[0])
+	r.chunks = r.chunks[1:]
+	return n, nil
+}
+
+// drawnPrompt is what a terminal gives a drawn prompt and a buffer
+// doesn't: a window size, without which bubbletea draws nothing.
+var drawnPrompt = []tea.ProgramOption{tea.WithWindowSize(80, 24)}
 
 // failingSet is a credential store whose Set fails, as when
 // credentials.json can't be written.

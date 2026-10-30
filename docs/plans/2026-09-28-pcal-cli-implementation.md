@@ -124,12 +124,30 @@ choices the review left open:
   `/my/identity` → store → revoke the old token. If the check fails, the
   new token is revoked and the check's error returned; nothing is stored,
   and the old token stays (Phase 7).
+- F2: login waits and prompts catch SIGTERM as well as SIGINT. SIGTERM
+  exits 143 with "Login terminated. Nothing was stored." (basecamp-cli's
+  `ExitTerminated`; `CodeTerminated` "terminated"). The drawn form gets
+  `tea.WithoutSignalHandler()`, so only pcal's context ends it (bubbletea's
+  own handler turned SIGTERM into a quit, which huh reported as the
+  half-typed answer). The accessible prompt restores the terminal on
+  SIGTERM too. Ctrl-\ (SIGQUIT) keeps Go's default, said so in a comment
+  (Phases 6–7).
+- F3: `TERM=dumb` makes prompts accessible (huh does that itself, and
+  pcal's `WithAccessible` undid it). When pcal's own output is unstyled
+  (`NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb`, unless `CLICOLOR_FORCE`),
+  prompts use a theme with no attributes, so an accessible prompt prints
+  no escape sequence; `prompt.New` takes that from
+  `outputOptions().NoColor`. Otherwise the bold/faint/reverse theme stays
+  (Phase 6).
 The other findings took the review's proposed fix. Among them: revoking
 the token a login replaced is bounded at 10 seconds and Ctrl-C stops it,
-with the usual warning either way (F8). Choices the decisions didn't spell
+with the usual warning either way (F8); pcal prompts only when stdin and
+stderr are both terminals, and otherwise refuses with a usage error that
+says to pipe the token in (F9). Choices the decisions didn't spell
 out: the revokes of a new token use the same 10-second bound, and a Ctrl-C
-during the old token's revoke leaves the new login standing (exit 0, with
-the warning).
+(or SIGTERM) during the old token's revoke leaves the new login standing
+(exit 0, with the warning); a SIGTERM after the code is sent says "Login
+terminated. The new token was revoked." (or couldn't be), exit 143.
 
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
@@ -497,9 +515,16 @@ Commit: "Pin API contract with golden JSON".
   `NewConfirm`). For accessibility (found at Gate 1b; accepted 2026-10-27),
   every form honors `ACCESSIBLE` (non-empty → `form.WithAccessible(true)`,
   the switch huh's README recommends), which swaps the redrawing TUI for
-  plain prompts a screen reader can follow. Prompts draw on stderr, in a
-  theme with no colors: huh's base theme with bold, faint, and reverse only,
-  help line included. huh quits only on Ctrl-C (`keymap.go:109`); pcal adds
+  plain prompts a screen reader can follow; so does `TERM=dumb`, where huh
+  falls back to them itself (Gate 3c). Prompts draw on stderr, so pcal
+  prompts only when stdin and stderr are both terminals (`Streams.ErrTTY`;
+  otherwise a usage error says to pipe the token in, as basecamp-cli's
+  `ErrNotInteractive`) (Gate 3c). They use a theme with no colors: huh's
+  base theme with bold, faint, and reverse only, help line included, and
+  not even those when pcal's output is unstyled (`NO_COLOR`, `CLICOLOR=0`,
+  `TERM=dumb`), so an accessible prompt then prints no escape sequence
+  (Gate 3c). The drawn form runs with `tea.WithoutSignalHandler()`: pcal
+  catches SIGINT and SIGTERM itself (Gate 3c). huh quits only on Ctrl-C (`keymap.go:109`); pcal adds
   Esc, as basecamp-cli does. Tests drive the drawn form with `WithInput`
   keystrokes (`\r` is Enter, `\x03` Ctrl-C) and accessible confirms with
   plain text lines; bubbletea v2 draws into a buffer only when given a
@@ -511,7 +536,9 @@ Commit: "Pin API contract with golden JSON".
   refuses a non-terminal there. In accessible mode huh drops every field
   error (`form.go#runAccessible`), so Ctrl-C reaches pcal only as SIGINT:
   logins catch it, and a canceled masked prompt puts the terminal's echo
-  back.
+  back. Logins catch SIGTERM too: exit 143, "Login terminated. Nothing was
+  stored." (Gate 3c; basecamp-cli's `loginContext` and `ExitTerminated`).
+  Ctrl-\ (SIGQUIT) keeps Go's default (a goroutine dump, exit 2).
 - `auth status`: URL, user, permission, and credential source (keyring / file /
   env). Not logged in → exit 3. It calls `/my/identity`, so it also checks
   the token (basecamp-cli's and fizzy-cli's are local only).
@@ -604,7 +631,8 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
   seconds; a failure, the timeout, or Ctrl-C there only warns (Gate 3c).
 - `PCAL_TOKEN` set → exit 1 before anything opens (Gate 3). Ctrl-C while
   waiting for the browser or the pasted address → exit 130, nothing stored
-  (Gate 3). Ctrl-C doesn't cut off `POST /cli/token`, which may already
+  (Gate 3); SIGTERM → exit 143, "Login terminated. Nothing was stored."
+  (Gate 3c). Ctrl-C doesn't cut off `POST /cli/token`, which may already
   have minted a token: it runs on `context.WithoutCancel`, bounded by the
   client's 30 seconds. A token that comes back after Ctrl-C (or Ctrl-C
   while it's checked) is revoked: "Login canceled. The new token was
@@ -717,7 +745,10 @@ given; a duplicate name or a bad color is a 422. `GET /tags` is already
 ordered by position, then name; keep that order.
 Red: each against the fake server and golden JSON. 422 → exit 1 with fields.
 Delete without `--yes` and without a TTY → exit 1. Delete with a TTY → huh
-confirm (injectable).
+confirm (injectable). Left for this phase by Gate 3c: when pcal's output
+is unstyled, the prompt theme has no attributes, so a drawn `Confirm`'s Yes
+and No look alike; mark the chosen one some other way (or use accessible
+prompts there) before using it.
 
 Commit: "Add tags commands".
 

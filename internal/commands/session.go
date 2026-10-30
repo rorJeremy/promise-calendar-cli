@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/rorJeremy/promise-calendar-cli/internal/auth"
@@ -27,6 +28,33 @@ type credentialStore interface {
 // errCanceled is how a command reports that the person canceled it with
 // Ctrl-C or Esc: execute prints the message alone, and pcal exits 130.
 var errCanceled = &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. Nothing was stored."}
+
+// errLoginTerminated is errCanceled for a SIGTERM: pcal exits 143 (Jeremy's
+// Gate 3c decision; basecamp-cli's loginOutcome and ExitTerminated).
+var errLoginTerminated = &output.Error{Code: output.CodeTerminated, Message: "Login terminated. Nothing was stored."}
+
+// loginStopped returns how a login that ctx, from interruptible, ended
+// before anything was stored reports it: canceled (Ctrl-C, or Esc at a
+// prompt) or terminated (SIGTERM).
+func loginStopped(ctx context.Context) error {
+	if terminated(ctx) {
+		return errLoginTerminated
+	}
+	return errCanceled
+}
+
+// interruption is the cause of a context interruptible ended: the signal
+// that came.
+type interruption struct{ os.Signal }
+
+func (i interruption) Error() string { return i.String() + " signal received" }
+
+// terminated reports whether ctx, from interruptible, was ended by SIGTERM
+// rather than Ctrl-C.
+func terminated(ctx context.Context) bool {
+	var i interruption
+	return errors.As(context.Cause(ctx), &i) && i.Signal == syscall.SIGTERM
+}
 
 // configDir returns pcal's config directory.
 func (a *app) configDir() (string, error) {
@@ -156,18 +184,41 @@ func (a *app) notef(format string, args ...any) {
 }
 
 // interruptible returns a context that ends when the person presses Ctrl-C
-// (SIGINT), and the function that stops listening for it. While it's
-// listening, Ctrl-C doesn't kill pcal, so a login can say it was canceled.
+// (SIGINT) or a SIGTERM arrives, with the signal as its cause (see
+// terminated), and the function that stops listening for them. While it's
+// listening, neither kills pcal, so a login can say it was stopped, and a
+// second one is swallowed until stop runs, as with signal.NotifyContext.
+// basecamp-cli's loginContext catches the same two.
+//
+// Ctrl-\ (SIGQUIT) keeps Go's default: a goroutine dump and exit 2, which
+// leaves an accessible prompt's echo off, as any crash would. It's a
+// debugging key, so pcal leaves it alone (Jeremy's Gate 3c decision).
 func (a *app) interruptible(ctx context.Context) (context.Context, context.CancelFunc) {
 	if a.interrupt != nil {
 		return a.interrupt(ctx)
 	}
-	return signal.NotifyContext(ctx, os.Interrupt)
+	ctx, cancel := context.WithCancelCause(ctx)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case sig := <-signals:
+			cancel(interruption{sig})
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(signals)
+		cancel(nil)
+	}
 }
 
-// prompter returns a Prompter that reads stdin and draws on stderr.
+// prompter returns a Prompter that reads stdin and draws on stderr. Its
+// prompts are plain when pcal's output is unstyled (NO_COLOR, CLICOLOR=0,
+// TERM=dumb; see colorDisabled), as the design's Output section says
+// (Jeremy's Gate 3c decision).
 func (a *app) prompter() prompt.Prompter {
-	return prompt.New(a.streams.In, a.streams.Err, a.getenv)
+	return prompt.New(a.streams.In, a.streams.Err, a.getenv, a.outputOptions().NoColor).WithProgramOptions(a.promptOptions...)
 }
 
 // describeWait says how long d is, for "up to 5 minutes": whole minutes

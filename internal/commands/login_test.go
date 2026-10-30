@@ -369,6 +369,7 @@ func TestBrowserLoginCanceledAfterTheCodeIsSent(t *testing.T) {
 	tests := []struct {
 		name       string
 		setup      func(*fakeCalendar, *keyboard)
+		wantExit   int
 		wantStderr func(baseURL string) string
 		wantRevoke bool
 	}{
@@ -381,6 +382,19 @@ func TestBrowserLoginCanceledAfterTheCodeIsSent(t *testing.T) {
 				})
 			},
 			wantStderr: func(string) string { return "\nLogin canceled. The new token was revoked.\n" },
+			wantRevoke: true,
+		},
+		{
+			// SIGTERM stops it the same way, but says so and exits 143.
+			name: "SIGTERM during the exchange",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("POST /cli/token", func(w http.ResponseWriter, r *http.Request) {
+					kb.terminate()
+					cal.redeem(w, r)
+				})
+			},
+			wantExit:   143,
+			wantStderr: func(string) string { return "\nLogin terminated. The new token was revoked.\n" },
 			wantRevoke: true,
 		},
 		{
@@ -452,7 +466,11 @@ func TestBrowserLoginCanceledAfterTheCodeIsSent(t *testing.T) {
 
 			r := h.run("login")
 
-			require.Equal(t, 130, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			wantExit := 130
+			if tt.wantExit != 0 {
+				wantExit = tt.wantExit
+			}
+			require.Equal(t, wantExit, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
 			require.Empty(t, r.stdout)
 			require.True(t, strings.HasSuffix(r.stderr, tt.wantStderr(cal.URL())), "stderr: %q", r.stderr)
 			revoke := request{Method: "DELETE", Path: "/my/current_access_token", Auth: "Bearer " + cliToken}

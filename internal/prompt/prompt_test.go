@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -201,45 +202,141 @@ func TestPromptsDrawWithoutColor(t *testing.T) {
 // buttons, errors), has no color.
 func TestThemeHasNoColors(t *testing.T) {
 	var colored []string
-	var walk func(path string, v reflect.Value)
-	walk = func(path string, v reflect.Value) {
-		if style, ok := v.Interface().(lipgloss.Style); ok {
-			for name, c := range map[string]color.Color{
-				"foreground": style.GetForeground(), "background": style.GetBackground(),
-				"border top": style.GetBorderTopForeground(), "border right": style.GetBorderRightForeground(),
-				"border bottom": style.GetBorderBottomForeground(), "border left": style.GetBorderLeftForeground(),
-				"border top background": style.GetBorderTopBackground(), "border right background": style.GetBorderRightBackground(),
-				"border bottom background": style.GetBorderBottomBackground(), "border left background": style.GetBorderLeftBackground(),
-			} {
-				if _, none := c.(lipgloss.NoColor); !none {
-					colored = append(colored, fmt.Sprintf("%s %s: %#v", path, name, c))
+	for _, plain := range []bool{false, true} {
+		for _, dark := range []bool{true, false} {
+			path := fmt.Sprintf("plain=%v dark=%v", plain, dark)
+			walkStyles(path, reflect.ValueOf(*theme(plain).Theme(dark)), func(path string, style lipgloss.Style) {
+				for name, c := range map[string]color.Color{
+					"foreground": style.GetForeground(), "background": style.GetBackground(),
+					"border top": style.GetBorderTopForeground(), "border right": style.GetBorderRightForeground(),
+					"border bottom": style.GetBorderBottomForeground(), "border left": style.GetBorderLeftForeground(),
+					"border top background": style.GetBorderTopBackground(), "border right background": style.GetBorderRightBackground(),
+					"border bottom background": style.GetBorderBottomBackground(), "border left background": style.GetBorderLeftBackground(),
+				} {
+					if _, none := c.(lipgloss.NoColor); !none {
+						colored = append(colored, fmt.Sprintf("%s %s: %#v", path, name, c))
+					}
 				}
-			}
-			return
-		}
-		if v.Kind() == reflect.Struct {
-			for i := range v.NumField() {
-				walk(path+"."+v.Type().Field(i).Name, v.Field(i))
-			}
+			})
 		}
 	}
-	walk("dark", reflect.ValueOf(*theme().Theme(true)))
-	walk("light", reflect.ValueOf(*theme().Theme(false)))
 
 	require.Empty(t, colored)
 }
 
-func TestNewReadsACCESSIBLE(t *testing.T) {
-	for _, tt := range []struct {
-		value string
-		want  bool
-	}{{"", false}, {"1", true}, {"true", true}} {
-		p := New(strings.NewReader(""), &bytes.Buffer{}, func(key string) string {
-			if key == "ACCESSIBLE" {
-				return tt.value
-			}
-			return ""
-		})
-		require.Equal(t, tt.want, p.Accessible, "ACCESSIBLE=%q", tt.value)
+// walkStyles calls visit for every lipgloss.Style in v, a theme's Styles,
+// with its field path.
+func walkStyles(path string, v reflect.Value, visit func(string, lipgloss.Style)) {
+	if style, ok := v.Interface().(lipgloss.Style); ok {
+		visit(path, style)
+		return
 	}
+	if v.Kind() == reflect.Struct {
+		for i := range v.NumField() {
+			walkStyles(path+"."+v.Type().Field(i).Name, v.Field(i), visit)
+		}
+	}
+}
+
+// Prompts are accessible with ACCESSIBLE set to anything, the switch huh's
+// README recommends, and on a dumb terminal, where huh falls back to them
+// itself (huh v2.0.3 form.go:129-131), since a redrawing form can't work
+// there (Gate 3c).
+func TestNewPicksAccessiblePrompts(t *testing.T) {
+	tests := []struct {
+		env  map[string]string
+		want bool
+	}{
+		{nil, false},
+		{map[string]string{"ACCESSIBLE": "1"}, true},
+		{map[string]string{"ACCESSIBLE": "true"}, true},
+		{map[string]string{"TERM": "dumb"}, true},
+		{map[string]string{"TERM": "xterm-256color"}, false},
+	}
+
+	for _, tt := range tests {
+		p := New(strings.NewReader(""), &bytes.Buffer{}, func(key string) string { return tt.env[key] }, false)
+		require.Equal(t, tt.want, p.Accessible, "env %v", tt.env)
+	}
+}
+
+func TestNewTakesPlain(t *testing.T) {
+	getenv := func(string) string { return "" }
+	require.True(t, New(strings.NewReader(""), &bytes.Buffer{}, getenv, true).Plain)
+	require.False(t, New(strings.NewReader(""), &bytes.Buffer{}, getenv, false).Plain)
+}
+
+// When pcal's output is unstyled (NO_COLOR, CLICOLOR=0, TERM=dumb), so are
+// its prompts: an accessible prompt prints no escape sequence at all, where
+// it would otherwise print its title in bold (Gate 3c).
+func TestPlainAccessiblePromptHasNoEscapes(t *testing.T) {
+	for _, plain := range []bool{true, false} {
+		var out bytes.Buffer
+		p := Prompter{In: strings.NewReader("y\n"), Out: &out, Accessible: true, Plain: plain}
+
+		_, err := p.Confirm(testContext(t), "Delete it?", false)
+
+		require.NoError(t, err)
+		require.Contains(t, out.String(), "Delete it?")
+		if plain {
+			require.NotContains(t, out.String(), "\x1b")
+		} else {
+			require.Contains(t, out.String(), "\x1b[1mDelete it?")
+		}
+	}
+}
+
+// The plain theme sets no attribute anywhere, the help line included.
+func TestPlainThemeHasNoAttributes(t *testing.T) {
+	var styled []string
+	walkStyles("", reflect.ValueOf(*theme(true).Theme(true)), func(path string, s lipgloss.Style) {
+		for name, on := range map[string]bool{
+			"bold": s.GetBold(), "faint": s.GetFaint(), "reverse": s.GetReverse(), "italic": s.GetItalic(),
+			"underline": s.GetUnderline(), "blink": s.GetBlink(), "strikethrough": s.GetStrikethrough(),
+		} {
+			if on {
+				styled = append(styled, path+" "+name)
+			}
+		}
+	})
+
+	require.Empty(t, styled)
+}
+
+// A drawn plain prompt has no attribute either, except the cursor's
+// reverse cell, which bubbles draws whatever the theme (bubbles v2.0.0
+// cursor/cursor.go:240) and which marks where the answer goes.
+func TestPlainDrawnPromptHasNoAttributes(t *testing.T) {
+	var out bytes.Buffer
+	keys := &pausingReader{chunks: []string{"pcal_secret", "\r"}, pause: 300 * time.Millisecond}
+
+	_, err := Prompter{In: keys, Out: &out, Plain: true, options: drawn}.Password(testContext(t), "Token")
+
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "Token")
+	sgr := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(out.String(), -1) {
+		sgr[m] = true
+	}
+	delete(sgr, "\x1b[m")
+	delete(sgr, "\x1b[7m")
+	require.Empty(t, sgr)
+}
+
+// syncBuffer is a bytes.Buffer safe to read while a form writes to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

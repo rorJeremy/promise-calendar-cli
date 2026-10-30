@@ -22,6 +22,10 @@ const (
 	// a prompt) to cancel, as in basecamp-cli. It's not a failure, so pcal
 	// prints a line saying so instead of an error.
 	ExitInterrupted = 130
+	// ExitTerminated is 128 + SIGTERM: whatever supervises pcal stopped a
+	// login, as basecamp-cli's ExitTerminated (output/codes.go). Like
+	// ExitInterrupted, it comes with a line instead of an error.
+	ExitTerminated = 143
 )
 
 // Error codes, the "code" of the JSON error envelope. Each maps to one exit
@@ -42,6 +46,9 @@ const (
 	// nothing to report, so Message is printed alone on stderr, without the
 	// "Error:" prefix or the JSON envelope.
 	CodeInterrupted = "interrupted"
+	// CodeTerminated marks a run a SIGTERM stopped, printed as
+	// CodeInterrupted is.
+	CodeTerminated = "terminated"
 )
 
 // ExitCodeFor returns the exit code for an error code. An unknown code is
@@ -64,6 +71,8 @@ func ExitCodeFor(code string) int {
 		return ExitAmbiguous
 	case CodeInterrupted:
 		return ExitInterrupted
+	case CodeTerminated:
+		return ExitTerminated
 	default:
 		return ExitAPI
 	}

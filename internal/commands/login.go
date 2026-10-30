@@ -143,7 +143,7 @@ func (a *app) loginWithToken(ctx context.Context) error {
 	}
 	id, err := a.fetchIdentity(sigCtx, a.newClient(baseURL, token))
 	if sigCtx.Err() != nil {
-		return errCanceled
+		return loginStopped(sigCtx)
 	}
 	if err != nil {
 		return rejectedToken(err, baseURL)
@@ -159,11 +159,21 @@ func (a *app) loginWithToken(ctx context.Context) error {
 
 // readToken reads a token: at a masked prompt when stdin is a terminal,
 // otherwise all of stdin. Either way it's trimmed, and must not be empty.
+// The prompt is drawn on stderr, so when stderr isn't a terminal pcal
+// refuses instead of waiting behind a prompt no one can see (as
+// basecamp-cli's tui.ErrNotInteractive).
 func (a *app) readToken(ctx context.Context) (string, error) {
 	if a.streams.InTTY {
+		if !a.streams.ErrTTY {
+			return "", &output.Error{
+				Code:    output.CodeUsage,
+				Message: "stdin is a terminal but stderr isn't, so pcal can't show the prompt",
+				Hint:    "Pipe the token in instead (`pcal login --with-token < token.txt`), or keep stderr on the terminal, where the prompt is drawn.",
+			}
+		}
 		token, err := a.prompter().Password(ctx, "Paste your pcal token (it won't be shown)")
 		if errors.Is(err, prompt.ErrCanceled) {
-			return "", errCanceled
+			return "", loginStopped(ctx)
 		}
 		if err != nil {
 			return "", err
@@ -185,8 +195,8 @@ func (a *app) readToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// readAll reads r to the end, or until ctx ends (Ctrl-C while a pipe is
-// still open).
+// readAll reads r to the end, or until ctx ends (Ctrl-C or SIGTERM while a
+// pipe is still open).
 func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 	type result struct {
 		data []byte
@@ -204,7 +214,7 @@ func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 		}
 		return res.data, nil
 	case <-ctx.Done():
-		return nil, errCanceled
+		return nil, loginStopped(ctx)
 	}
 }
 
@@ -268,7 +278,7 @@ func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 		code, err = a.listenForCallback(waitCtx, l, opts.noBrowser)
 	}
 	if sigCtx.Err() != nil {
-		return errCanceled
+		return loginStopped(sigCtx)
 	}
 	if err != nil {
 		return err
@@ -281,9 +291,9 @@ func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 	tok, err := auth.Exchange(context.WithoutCancel(sigCtx), a.newClient(baseURL, ""), code, pkce.Verifier)
 	if sigCtx.Err() != nil {
 		if err != nil {
-			return errCanceled
+			return loginStopped(sigCtx)
 		}
-		return a.canceledWithANewToken(ctx, baseURL, tok.Token)
+		return a.stoppedWithANewToken(ctx, sigCtx, baseURL, tok.Token)
 	}
 	if err != nil {
 		return err
@@ -292,7 +302,7 @@ func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 	// a login that fails here leaves the old one as it was.
 	id, err := a.fetchIdentity(sigCtx, a.newClient(baseURL, tok.Token))
 	if sigCtx.Err() != nil {
-		return a.canceledWithANewToken(ctx, baseURL, tok.Token)
+		return a.stoppedWithANewToken(ctx, sigCtx, baseURL, tok.Token)
 	}
 	if err != nil {
 		a.discard(ctx, baseURL, tok.Token)
@@ -308,17 +318,21 @@ func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 	return a.reportLogin(baseURL, id)
 }
 
-// canceledWithANewToken reports a browser login canceled after the server
-// minted token: it's revoked, and the message says whether that worked.
-// Either way pcal exits 130.
-func (a *app) canceledWithANewToken(ctx context.Context, baseURL, token string) error {
+// stoppedWithANewToken reports a browser login that sigCtx's Ctrl-C (or
+// SIGTERM) stopped after the server minted token: it's revoked, and the
+// message says whether that worked. pcal exits 130 (or 143) either way.
+func (a *app) stoppedWithANewToken(ctx, sigCtx context.Context, baseURL, token string) error {
+	code, stopped := output.CodeInterrupted, "canceled"
+	if terminated(sigCtx) {
+		code, stopped = output.CodeTerminated, "terminated"
+	}
 	if err := a.revokeBriefly(ctx, baseURL, token); err != nil {
 		return &output.Error{
-			Code:    output.CodeInterrupted,
-			Message: fmt.Sprintf("Login canceled, but pcal couldn't revoke the new token (%v); revoke it at %s/my/access_tokens.", err, baseURL),
+			Code:    code,
+			Message: fmt.Sprintf("Login %s, but pcal couldn't revoke the new token (%v); revoke it at %s/my/access_tokens.", stopped, err, baseURL),
 		}
 	}
-	return &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. The new token was revoked."}
+	return &output.Error{Code: code, Message: "Login " + stopped + ". The new token was revoked."}
 }
 
 // discard revokes token, a new one the login failed to keep, before the
@@ -488,8 +502,8 @@ func (a *app) storeLogin(ctx context.Context, baseURL string, c auth.Credential)
 }
 
 // revokeBriefly revokes token for cleanup after a login, giving up after
-// revokeTimeout or when the person presses Ctrl-C. Its error says why, in
-// words a warning can quote.
+// revokeTimeout, or at Ctrl-C or SIGTERM. Its error says why, in words a
+// warning can quote.
 func (a *app) revokeBriefly(ctx context.Context, baseURL, token string) error {
 	wait := a.revokeWait
 	if wait == 0 {
@@ -504,6 +518,8 @@ func (a *app) revokeBriefly(ctx context.Context, baseURL, token string) error {
 	switch {
 	case err == nil:
 		return nil
+	case terminated(sigCtx):
+		return errors.New("stopped by SIGTERM")
 	case sigCtx.Err() != nil:
 		return errors.New("canceled with Ctrl-C")
 	case errors.Is(reqCtx.Err(), context.DeadlineExceeded):
