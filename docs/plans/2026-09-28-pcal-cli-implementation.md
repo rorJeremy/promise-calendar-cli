@@ -139,11 +139,26 @@ choices the review left open:
   no escape sequence; `prompt.New` takes that from
   `outputOptions().NoColor`. Otherwise the bold/faint/reverse theme stays
   (Phase 6).
+- F5: a `/callback` whose state isn't this login's gets the 400 page and
+  pcal keeps waiting; only a matching state decides (an
+  `error=access_denied` with the right state still ends it). A deliberate
+  deviation from basecamp-cli, whose first callback decides
+  (`internal/auth/callback.go:98–104`). The paste flow still fails at once
+  on a wrong state, exit 3 (Phase 7).
 The other findings took the review's proposed fix. Among them: revoking
 the token a login replaced is bounded at 10 seconds and Ctrl-C stops it,
 with the usual warning either way (F8); pcal prompts only when stdin and
 stderr are both terminals, and otherwise refuses with a usage error that
-says to pipe the token in (F9). Choices the decisions didn't spell
+says to pipe the token in (F9); a flag error never repeats `--with-token`'s
+value, and an unknown-command error never repeats a word that looks like
+a token (`pcal_…`), for any command (F6); `--with-token` reads at most 4096
+bytes of stdin, more is a usage error (F7); hints never suggest `echo … |`,
+which puts the token in shell history (F10); and four texts (F14): logout
+keeps naming `pcal tokens revoke ID` (Phase 12 has a reminder), the port
+hint offers `--with-token` instead of `--remote` (which uses the same port
+range), a control character in a token says how to paste it, and
+`errCanceled` is `errLoginCanceled`, since Phase 9's prompts need their
+own. Choices the decisions didn't spell
 out: the revokes of a new token use the same 10-second bound, and a Ctrl-C
 (or SIGTERM) during the old token's revoke leaves the new login standing
 (exit 0, with the warning); a SIGTERM after the code is sent says "Login
@@ -493,12 +508,26 @@ Commit: "Pin API contract with golden JSON".
 **Red** (commands tested through `cobra` with a fake server; output captured):
 - `auth login --with-token`: reads the token from **stdin** (as in
   basecamp-cli `auth login --with-token`). When stdin is a TTY, use a masked huh
-  input; when it's piped, read everything and trim it. Empty → exit 1. Verify
+  input; when it's piped, read it (up to 4096 bytes) and trim it. Empty →
+  exit 1. Verify
   with `GET /my/identity` **before** storing (source `imported`), then print
   "Logged in as Admin User (write)". 401 → exit 3, nothing stored. A
-  positional token argument → exit 1 with the hint `echo … | pcal auth login
-  --with-token`, and the error never repeats the token (basecamp-cli's
-  `cobra.NoArgs` does). `PCAL_TOKEN` set → exit 1 before reading anything
+  positional token argument → exit 1 with the hint "Pipe the token in from
+  a file or the clipboard (`pcal login --with-token < token.txt` or
+  `pbpaste | pcal login --with-token`), or run `pcal login --with-token` in
+  a terminal to paste it at a hidden prompt." (never `echo … |`, which
+  lands in shell history too; Gate 3c), and the error never repeats the
+  token (basecamp-cli's `cobra.NoArgs` does). Nor does any other error: a
+  word that looks like a token (`pcal_…`) after any command is "unknown
+  command for "pcal whoami" (not shown: it looks like a token)", every
+  leaf's `Args` is `unknownCommand` instead of `cobra.NoArgs`, and
+  `--with-token=<value>` is "--with-token doesn't take a value; it reads
+  the token from stdin" instead of pflag's message, which quotes the value
+  (Gate 3c). Piped stdin is read up to 4096 bytes; more is exit 1, "stdin
+  holds more than 4096 bytes; a pcal token is 69 characters" (Gate 3c;
+  basecamp-cli's `maxTokenBytes`). A control character inside the token
+  → exit 1, hint "Paste the token on one line: it's pcal_ and 64 hex
+  characters." (Gate 3c). `PCAL_TOKEN` set → exit 1 before reading anything
   (Gate 3). Ctrl-C or Esc at the prompt → exit 130 (Gate 3). Replacing a
   token `pcal login` minted revokes it (Gate 3), within 10 seconds, and
   Ctrl-C stops that; a failure, the timeout, or Ctrl-C there only warns,
@@ -594,18 +623,25 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
   1024–65535 (the default ephemeral ranges all are: macOS and Windows
   49152–65535, Linux 32768–60999; the range is configurable, so if the
   listener gets a port below 1024, exit 1 with a clear message instead of
-  waiting), `state` 1–128 chars of `A-Za-z0-9_-` (our 43-char base64url
-  fits), `code_challenge` exactly 43 base64url chars (unpadded), `permission`
-  `read`|`write`, and a non-blank `device`. The verifier (43 chars,
+  waiting; its hint offers `pcal login --with-token`, since `--remote`
+  picks its port from the same range, Gate 3c), `state` 1–128 chars of
+  `A-Za-z0-9_-` (our 43-char base64url fits), `code_challenge` exactly 43
+  base64url chars (unpadded), `permission` `read`|`write`, and a non-blank
+  `device`. The verifier (43 chars,
   unpadded base64url) satisfies the server's `VERIFIER_FORMAT` (43–128 of
   `A-Za-z0-9-._~`). If
   `os.Hostname()` fails or is blank, send `device=unknown host`. The server
   truncates `device` to 60 characters and names the token "pcal on <device>".
-- Handle `/callback`: the first request decides (later ones get an "already
-  finished" page and change nothing; other paths are 404s that don't end the
-  wait). The state is checked first: a mismatch → 400 page and exit 3 "the
-  browser's answer didn't match this login" (the expected state is never
-  printed). `error=access_denied` → exit 3 "authorization denied in the
+- Handle `/callback`: the first request with this login's state decides
+  (later ones get an "already finished" page and change nothing; other
+  paths are 404s that don't end the wait). A request with another state,
+  or none, gets a 400 page ("pcal is waiting for a different login") and
+  changes nothing, so a stray request from another process on this
+  computer can't end the login; only the calendar's redirect carries the
+  state (Gate 3c; a deliberate deviation from basecamp-cli, whose first
+  callback decides, `internal/auth/callback.go:98–104`). In the paste flow
+  a wrong state is still exit 3 "the browser's answer didn't match this
+  login" at once (the expected state is never printed). `error=access_denied` → exit 3 "authorization denied in the
   browser". No code → exit 3. Success page: "You can close this tab". The
   page is written before pcal acts on the answer, and the server shuts down
   gracefully, so the browser always gets it. Timeout after 5 minutes → exit
@@ -748,7 +784,10 @@ Delete without `--yes` and without a TTY → exit 1. Delete with a TTY → huh
 confirm (injectable). Left for this phase by Gate 3c: when pcal's output
 is unstyled, the prompt theme has no attributes, so a drawn `Confirm`'s Yes
 and No look alike; mark the chosen one some other way (or use accessible
-prompts there) before using it.
+prompts there) before using it. And `errLoginCanceled` ("Login canceled.
+Nothing was stored.", exit 130) is the login's; a canceled confirmation
+needs its own error (basecamp-cli treats it as "no", exit 0:
+`internal/commands/skill.go:164–176`).
 
 Commit: "Add tags commands".
 
@@ -901,7 +940,10 @@ Commit: "Add event write commands".
   another event.
 - `tokens list` → `GET /my/access_tokens` (yours only, newest first).
   `tokens revoke ID [--yes]` → `DELETE /my/access_tokens/:id` (404 when it
-  isn't yours).
+  isn't yours). Logout already names `pcal tokens revoke ID` (its help, and
+  its summary for an imported token: `internal/commands/auth.go`), which
+  doesn't exist until this phase (Gate 3b F14); check those still match
+  when it lands.
 - `website-token show` → `GET /api_token` (`exists`, `description`,
   `last_used_at`, `created_at`; all but `exists` null when there's none).
   `rotate [--yes]` → `POST /api_token` → 201 `{token, created_at}`. It prints

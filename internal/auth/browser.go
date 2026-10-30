@@ -83,7 +83,9 @@ func AuthorizationURL(baseURL string, port int, p PKCE, device, permission strin
 
 // CheckPort returns a usage error for a port the calendar won't send the
 // browser back to (it accepts 1024 to 65535). Every OS's default ephemeral
-// range is inside that, but the range can be configured.
+// range is inside that, but the range can be configured. The paste flow
+// picks its port from the same range, so the hint offers a token login,
+// which needs no port.
 func CheckPort(port int) error {
 	if port >= 1024 && port <= 65535 {
 		return nil
@@ -91,7 +93,7 @@ func CheckPort(port int) error {
 	return &output.Error{
 		Code:    output.CodeUsage,
 		Message: fmt.Sprintf("pcal's login listener got port %d, and the calendar only sends the browser back to ports 1024 to 65535", port),
-		Hint:    "Check this computer's ephemeral port range, or run `pcal login --remote`.",
+		Hint:    "Check this computer's ephemeral port range, or log in with a personal access token instead: `pcal login --with-token`.",
 	}
 }
 
@@ -173,7 +175,8 @@ type callbackResult struct {
 
 // CallbackServer is the loopback listener the calendar sends the browser
 // back to, at http://127.0.0.1:<port>/callback. Only the first callback
-// counts; later ones get a page saying the login already finished.
+// with this login's state counts; later ones get a page saying the login
+// already finished, and one with any other state is answered and ignored.
 type CallbackServer struct {
 	listener net.Listener
 	server   *http.Server
@@ -203,6 +206,18 @@ func ListenForCallback(state string) (*CallbackServer, error) {
 func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+
+	if r.URL.Query().Get("state") != s.state {
+		// Only the calendar's redirect carries this login's state, so a
+		// callback without it, such as a stray request from another process
+		// on this computer, doesn't end the login (Jeremy's Gate 3c
+		// decision; a deliberate deviation from basecamp-cli, whose first
+		// callback decides, internal/auth/callback.go:98-104). The paste
+		// flow still fails at once on a wrong state: the person pasted it.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, page("pcal is waiting for a different login", "This answer is for another login, so pcal ignored it. Check your terminal."))
+		return
+	}
 
 	first := false
 	var res callbackResult

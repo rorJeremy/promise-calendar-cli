@@ -12,7 +12,7 @@ func newWhoamiCmd(a *app) *cobra.Command {
 		Use:   "whoami",
 		Short: "Show who the token belongs to",
 		Long:  "Show the person the token belongs to, what it may do (read or write), and the\ncalendar's time zone.",
-		Args:  cobra.NoArgs,
+		Args:  unknownCommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := a.open()
 			if err != nil {

@@ -131,7 +131,10 @@ pcal version | completion {bash,zsh,fish} | skill install
    verifier; `challenge = base64url(sha256(verifier))`.
 2. Open `<base>/cli/authorization/new?port=&state=&code_challenge=&device=<hostname>&permission=write|read`
    (print the URL too, in case the browser doesn't open).
-3. Wait up to 5 minutes for `/callback?code=&state=`. Reject a state mismatch.
+3. Wait up to 5 minutes for `/callback?code=&state=`. A callback with
+   another state (or none) gets a 400 page and is ignored; only this
+   login's state decides, so a stray local request can't end the login
+   (Jeremy's Gate 3c decision; basecamp-cli's first callback decides).
    Handle `error=access_denied`. Serve a small "You can close this tab" page.
 4. `POST /cli/token {code, code_verifier}` → token. Check it with
    `/my/identity`, store it, revoke the token it replaces, and print
@@ -189,7 +192,8 @@ can read is made `0600` again, with a warning.
 **Precedence:** flag (`--url`) > env (`PCAL_URL`, `PCAL_TOKEN`) >
 config/keyring. There is no `--token` flag: tokens never go in argv, where
 they'd land in shell history and the process list. Use `PCAL_TOKEN` or
-`--with-token`. Both logins refuse while `PCAL_TOKEN` is set, since every later command
+`--with-token`. One typed into argv anyway is never repeated in an error
+(Gate 3c). Both logins refuse while `PCAL_TOKEN` is set, since every later command
 would keep using it instead (Gate 3), and so does logout, which can't end
 an environment token. pcal never saves `--url` in config.json (Gate 3);
 use `--url` or `PCAL_URL` on every command for another calendar.

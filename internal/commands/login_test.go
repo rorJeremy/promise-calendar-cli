@@ -210,9 +210,14 @@ func TestBrowserLoginFailures(t *testing.T) {
 			wantExit: 3, wantCode: "auth_required", wantMsg: "authorization denied in the browser", wantHint: "Run `pcal login` again.",
 		},
 		{
-			name:     "another login's state",
-			setup:    func(_ *harness, cal *fakeCalendar) { cal.decision = "mismatch" },
-			wantExit: 3, wantCode: "auth_required", wantMsg: "the browser's answer didn't match this login", wantHint: "Run `pcal login` again.",
+			// A callback with another login's state is ignored, so pcal
+			// keeps waiting for the right one (Jeremy's Gate 3c decision).
+			name: "another login's state is ignored",
+			setup: func(h *harness, cal *fakeCalendar) {
+				cal.decision = "mismatch"
+				h.loginWait = 200 * time.Millisecond
+			},
+			wantExit: 3, wantCode: "auth_required", wantMsg: "timed out waiting for you to approve pcal in the browser", wantHint: "Run `pcal login` again.",
 		},
 		{
 			name: "no answer in time",

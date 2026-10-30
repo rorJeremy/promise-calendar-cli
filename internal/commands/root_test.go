@@ -343,6 +343,42 @@ func TestUnknownCommandSuggestions(t *testing.T) {
 	}
 }
 
+// A token typed where a command or a flag's value goes is never repeated:
+// not in the message, the hint, or the JSON envelope a CI log keeps. It's in
+// the shell's history already; the error shouldn't copy it into logs and
+// scrollback too (Gate 3b F6). An ordinary word is still quoted.
+func TestTokensTypedAsArgumentsArentRepeated(t *testing.T) {
+	const withTokenValue = "--with-token doesn't take a value; it reads the token from stdin"
+	tests := []struct {
+		args     []string
+		wantMsg  string
+		wantHint string
+	}{
+		{[]string{"login", "--with-token=pcal_secret"}, withTokenValue, pipeHint},
+		{[]string{"auth", "login", "--with-token=pcal_secret"}, withTokenValue, pipeHint},
+		{[]string{"pcal_secret"}, `unknown command for "pcal" (not shown: it looks like a token)`, "Run `pcal --help` for usage."},
+		{[]string{"auth", "pcal_secret"}, `unknown command for "pcal auth" (not shown: it looks like a token)`, "Run `pcal auth --help` for usage."},
+		{[]string{"whoami", "pcal_secret"}, `unknown command for "pcal whoami" (not shown: it looks like a token)`, "Run `pcal whoami --help` for usage."},
+		{[]string{"logout", "pcal_secret"}, `unknown command for "pcal logout" (not shown: it looks like a token)`, "Run `pcal logout --help` for usage."},
+		{[]string{"auth", "logout", "pcal_secret"}, `unknown command for "pcal auth logout" (not shown: it looks like a token)`, "Run `pcal auth logout --help` for usage."},
+		{[]string{"auth", "status", "pcal_secret"}, `unknown command for "pcal auth status" (not shown: it looks like a token)`, "Run `pcal auth status --help` for usage."},
+		{[]string{"whoami", "frobnicate"}, `unknown command "frobnicate" for "pcal whoami"`, "Run `pcal whoami --help` for usage."},
+	}
+
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			r := runPcal(t, tt.args...)
+
+			require.Equal(t, 1, r.code, "stdout: %s", r.stdout)
+			env := decodeError(t, r.stdout)
+			require.Equal(t, "usage", env.Error.Code)
+			require.Equal(t, tt.wantMsg, env.Error.Message)
+			require.Equal(t, tt.wantHint, env.Error.Hint)
+			require.NotContains(t, r.stdout+r.stderr, "pcal_secret")
+		})
+	}
+}
+
 func TestOrList(t *testing.T) {
 	require.Equal(t, "a", orList([]string{"a"}))
 	require.Equal(t, "a or b", orList([]string{"a", "b"}))

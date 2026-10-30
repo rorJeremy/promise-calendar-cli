@@ -25,11 +25,13 @@ type credentialStore interface {
 	Delete(baseURL string) error
 }
 
-// errCanceled is how a command reports that the person canceled it with
-// Ctrl-C or Esc: execute prints the message alone, and pcal exits 130.
-var errCanceled = &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. Nothing was stored."}
+// errLoginCanceled is how a login reports that the person canceled it with
+// Ctrl-C or Esc: execute prints the message alone, and pcal exits 130. Its
+// words are the login's; Phase 9's confirmation prompts need their own (a
+// canceled confirmation in basecamp-cli is "no", exit 0).
+var errLoginCanceled = &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. Nothing was stored."}
 
-// errLoginTerminated is errCanceled for a SIGTERM: pcal exits 143 (Jeremy's
+// errLoginTerminated is errLoginCanceled for a SIGTERM: pcal exits 143 (Jeremy's
 // Gate 3c decision; basecamp-cli's loginOutcome and ExitTerminated).
 var errLoginTerminated = &output.Error{Code: output.CodeTerminated, Message: "Login terminated. Nothing was stored."}
 
@@ -40,7 +42,7 @@ func loginStopped(ctx context.Context) error {
 	if terminated(ctx) {
 		return errLoginTerminated
 	}
-	return errCanceled
+	return errLoginCanceled
 }
 
 // interruption is the cause of a context interruptible ended: the signal

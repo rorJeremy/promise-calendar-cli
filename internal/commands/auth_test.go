@@ -210,7 +210,10 @@ func TestLoginWithTokenCanceledAtThePrompt(t *testing.T) {
 }
 
 func TestLoginWithTokenRefusals(t *testing.T) {
-	const pipeHint = "Pipe the token in: `echo … | pcal auth login --with-token`."
+	// Never `echo … |`, which puts the token in shell history too (Gate 3b
+	// F10).
+	const pipeHint = "Pipe the token in from a file or the clipboard (`pcal login --with-token < token.txt` or " +
+		"`pbpaste | pcal login --with-token`), or run `pcal login --with-token` in a terminal to paste it at a hidden prompt."
 	tests := []struct {
 		name     string
 		stdin    string
@@ -226,7 +229,8 @@ func TestLoginWithTokenRefusals(t *testing.T) {
 		{
 			// It can't be sent in a header, and the error doesn't quote it.
 			name: "a control character inside", stdin: "pcal_go\x1bod\n",
-			wantMsg: "the token contains a control character, such as a line break inside it", wantHint: "Run `pcal auth login --help` for usage.",
+			wantMsg:  "the token contains a control character, such as a line break inside it",
+			wantHint: "Paste the token on one line: it's pcal_ and 64 hex characters.",
 		},
 		{
 			// An argument lands in shell history and the process list. The
@@ -234,7 +238,7 @@ func TestLoginWithTokenRefusals(t *testing.T) {
 			// unknown command "<TOKEN>").
 			name: "a token as an argument", args: []string{goodToken},
 			wantMsg:  "pcal auth login doesn't take a token as an argument, where it would land in your shell history",
-			wantHint: "Pipe it in instead: `echo … | pcal auth login --with-token`.",
+			wantHint: pipeHint,
 		},
 		{
 			// Every later command would use PCAL_TOKEN instead (Jeremy's
@@ -243,6 +247,14 @@ func TestLoginWithTokenRefusals(t *testing.T) {
 			name: "PCAL_TOKEN is set", stdin: goodToken, env: map[string]string{"PCAL_TOKEN": "pcal_other"},
 			wantMsg:  "PCAL_TOKEN is set, so pcal would keep using it instead of this login",
 			wantHint: "Unset PCAL_TOKEN, then log in again.",
+		},
+		{
+			// A token is 69 characters, so 4 KB is plenty; past that it's
+			// the wrong thing on stdin (Gate 3b F7; basecamp-cli's
+			// maxTokenBytes).
+			name: "more than 4096 bytes", stdin: goodToken + strings.Repeat(" ", 4097-len(goodToken)),
+			wantMsg:  "stdin holds more than 4096 bytes; a pcal token is 69 characters",
+			wantHint: "Pipe in only the token.",
 		},
 	}
 
@@ -268,6 +280,53 @@ func TestLoginWithTokenRefusals(t *testing.T) {
 			h.requireNothingStored(cal.URL())
 		})
 	}
+}
+
+// stdin is read only as far as the limit: something that never ends, like
+// `yes | pcal login --with-token`, is refused at once instead of filling
+// memory (Gate 3b F7). Up to 4096 bytes is fine.
+func TestLoginWithTokenReadsAtMost4096Bytes(t *testing.T) {
+	t.Run("endless stdin", func(t *testing.T) {
+		cal := newFakeCalendar(t)
+		h := newHarness(t, cal.URL())
+		stdin := &endless{}
+		h.stdin = stdin
+
+		r := h.run("login", "--with-token")
+
+		require.Equal(t, 1, r.code, "stdout: %s", r.stdout)
+		require.Equal(t, "stdin holds more than 4096 bytes; a pcal token is 69 characters", decodeError(t, r.stdout).Error.Message)
+		require.LessOrEqual(t, stdin.read, 4097)
+		require.Empty(t, cal.requests())
+	})
+	t.Run("4096 bytes", func(t *testing.T) {
+		cal := newFakeCalendar(t)
+		h := newHarness(t, cal.URL())
+		h.stdin = strings.NewReader(goodToken + strings.Repeat(" ", 4096-len(goodToken)))
+
+		r := h.run("login", "--with-token")
+
+		require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
+		require.Equal(t, goodToken, h.stored(cal.URL()).Token)
+	})
+}
+
+// endless is a stdin that never ends, like `yes`. So that a pcal reading
+// it without a limit fails the test instead of filling memory, it gives up
+// with an error after 1 MiB, far past what pcal may read.
+type endless struct {
+	read int
+}
+
+func (e *endless) Read(b []byte) (int, error) {
+	if e.read >= 1<<20 {
+		return 0, errors.New("read 1 MiB of endless stdin")
+	}
+	for i := range b {
+		b[i] = 'y'
+	}
+	e.read += len(b)
+	return len(b), nil
 }
 
 func TestLoginWithARejectedToken(t *testing.T) {
@@ -880,7 +939,7 @@ func TestTerminatedRunPrintsALineAndExits143(t *testing.T) {
 // exits 130, even when stdout isn't a terminal.
 func TestCanceledRunPrintsALineAndExits130(t *testing.T) {
 	r := runWithSubcommand(t, &cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error {
-		return errCanceled
+		return errLoginCanceled
 	}}, "probe", "--json")
 
 	require.Equal(t, 130, r.code)

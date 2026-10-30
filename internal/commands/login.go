@@ -30,8 +30,17 @@ const loginTimeout = 5 * time.Minute
 // it's shorter than a request's 30 seconds.
 const revokeTimeout = 10 * time.Second
 
-// pipeHint says how to give `--with-token` its token.
-const pipeHint = "Pipe the token in: `echo … | pcal auth login --with-token`."
+// pipeHint says how to give `--with-token` its token. Never `echo … |`,
+// which puts the token in shell history too, the reason a token argument
+// is refused (Gate 3b F10).
+const pipeHint = "Pipe the token in from a file or the clipboard (`pcal login --with-token < token.txt` or " +
+	"`pbpaste | pcal login --with-token`), or run `pcal login --with-token` in a terminal to paste it at a hidden prompt."
+
+// maxTokenBytes bounds what --with-token reads from stdin. A pcal token is
+// 69 characters ("pcal_" and 64 hex), so more than this is the wrong thing
+// piped in, maybe something endless (as basecamp-cli's maxTokenBytes,
+// internal/commands/auth.go:652).
+const maxTokenBytes = 4096
 
 // pasteAgainHint is the hint when the paste flow has to start over.
 const pasteAgainHint = "Run `pcal login` again, and paste the whole address from the browser's address bar."
@@ -108,7 +117,7 @@ func noTokenArgument(cmd *cobra.Command, args []string) error {
 	return &output.Error{
 		Code:    output.CodeUsage,
 		Message: cmd.CommandPath() + " doesn't take a token as an argument, where it would land in your shell history",
-		Hint:    "Pipe it in instead: `echo … | pcal auth login --with-token`.",
+		Hint:    pipeHint,
 	}
 }
 
@@ -196,7 +205,8 @@ func (a *app) readToken(ctx context.Context) (string, error) {
 }
 
 // readAll reads r to the end, or until ctx ends (Ctrl-C or SIGTERM while a
-// pipe is still open).
+// pipe is still open). More than maxTokenBytes is a usage error, read no
+// further.
 func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 	type result struct {
 		data []byte
@@ -204,13 +214,20 @@ func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		data, err := io.ReadAll(r)
+		data, err := io.ReadAll(io.LimitReader(r, maxTokenBytes+1))
 		done <- result{data, err}
 	}()
 	select {
 	case res := <-done:
 		if res.err != nil {
 			return nil, fmt.Errorf("reading the token from stdin: %w", res.err)
+		}
+		if len(res.data) > maxTokenBytes {
+			return nil, &output.Error{
+				Code:    output.CodeUsage,
+				Message: fmt.Sprintf("stdin holds more than %d bytes; a pcal token is 69 characters", maxTokenBytes),
+				Hint:    "Pipe in only the token.",
+			}
 		}
 		return res.data, nil
 	case <-ctx.Done():

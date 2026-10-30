@@ -87,6 +87,9 @@ func TestCheckPort(t *testing.T) {
 	require.ErrorAs(t, err, &e)
 	require.Equal(t, output.CodeUsage, e.Code)
 	require.Equal(t, "pcal's login listener got port 1023, and the calendar only sends the browser back to ports 1024 to 65535", e.Message)
+	// --remote picks its port the same way, so it can't help (Gate 3b
+	// F14); a personal access token needs no port.
+	require.Equal(t, "Check this computer's ephemeral port range, or log in with a personal access token instead: `pcal login --with-token`.", e.Hint)
 }
 
 // requireAuthError asserts err is an auth error (exit 3) with message.
@@ -217,7 +220,6 @@ func TestCallbackServerFailures(t *testing.T) {
 		wantPage   string
 		wantErr    string
 	}{
-		{"state mismatch", "/callback?code=c0de&state=other", http.StatusBadRequest, "didn&#39;t match", "the browser's answer didn't match this login"},
 		{"denied", "/callback?error=access_denied&state=st", http.StatusOK, "You canceled the login", "authorization denied in the browser"},
 		{"no code", "/callback?state=st", http.StatusBadRequest, "no login code", "the browser's answer had no login code"},
 	}
@@ -234,6 +236,26 @@ func TestCallbackServerFailures(t *testing.T) {
 			require.Contains(t, page, tt.wantPage)
 		})
 	}
+}
+
+// A callback without this login's state gets a 400 page and changes
+// nothing, so a stray request from another process on this computer can't
+// end the login: only the calendar's redirect carries the state, so only
+// it decides (Jeremy's Gate 3c decision; a deliberate deviation from
+// basecamp-cli, whose first callback decides, internal/auth/callback.go:98-104).
+func TestCallbackServerIgnoresAnotherLoginsState(t *testing.T) {
+	s := startCallbackServer(t, "st")
+
+	for _, query := range []string{"/callback", "/callback?code=c0de&state=other", "/callback?error=access_denied&state=other"} {
+		status, page := visit(t, s, query)
+		require.Equal(t, http.StatusBadRequest, status, query)
+		require.Contains(t, page, "pcal ignored it", query)
+	}
+	visit(t, s, "/callback?code=c0de&state=st")
+	code, err := waitFor(t, s)
+
+	require.NoError(t, err)
+	require.Equal(t, "c0de", code)
 }
 
 // Only the first callback counts: a second one, even a valid one, gets a

@@ -198,7 +198,11 @@ func EnvToken(getenv func(string) string) string {
 // The error never quotes the token.
 func CheckToken(token string) error {
 	if strings.IndexFunc(token, unicode.IsControl) >= 0 {
-		return output.Usagef("the token contains a control character, such as a line break inside it")
+		return &output.Error{
+			Code:    output.CodeUsage,
+			Message: "the token contains a control character, such as a line break inside it",
+			Hint:    "Paste the token on one line: it's pcal_ and 64 hex characters.",
+		}
 	}
 	return nil
 }

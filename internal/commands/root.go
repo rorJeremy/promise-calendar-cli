@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
 	"github.com/rorJeremy/promise-calendar-cli/internal/client"
@@ -186,15 +187,23 @@ func newGroupCmd(use, short string) *cobra.Command {
 	}
 }
 
-// unknownCommand is the Args of the root and of every group. They take no
-// arguments of their own, so a stray word is an unknown command. cobra.NoArgs says so but suggests
-// nothing, and once the root has subcommands, cobra's own check (legacyArgs,
-// used only when Args is nil) puts its suggestions in the message across
-// several lines. Here they go in the hint, so the message stays one line:
-// "Did you mean `pcal whoami`? Run `pcal --help` for usage."
+// unknownCommand is the Args of the root, of every group, and of every
+// command that takes no arguments, so a stray word is an unknown command.
+// cobra.NoArgs says so but suggests nothing, and once the root has
+// subcommands, cobra's own check (legacyArgs, used only when Args is nil)
+// puts its suggestions in the message across several lines. Here they go
+// in the hint, so the message stays one line: "Did you mean `pcal
+// whoami`? Run `pcal --help` for usage." A word that looks like a token
+// isn't repeated (see looksLikeToken).
 func unknownCommand(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
+	}
+	if looksLikeToken(args[0]) {
+		return &output.Error{
+			Code:    output.CodeUsage,
+			Message: fmt.Sprintf("unknown command for %q (not shown: it looks like a token)", cmd.CommandPath()),
+		}
 	}
 	hint := helpHint(cmd)
 	if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
@@ -209,6 +218,28 @@ func unknownCommand(cmd *cobra.Command, args []string) error {
 		Message: fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath()),
 		Hint:    hint,
 	}
+}
+
+// looksLikeToken reports whether word looks like a pcal token ("pcal_" and
+// 64 hex). One typed as an argument is in the shell's history already, so
+// errors don't repeat it into logs and scrollback too (Gate 3b F6).
+func looksLikeToken(word string) bool {
+	return strings.HasPrefix(word, "pcal_")
+}
+
+// flagError is the root's flag error func, which every command inherits. A
+// value given to --with-token (someone typed --with-token=<token>) isn't
+// repeated, as pflag's message would.
+func flagError(_ *cobra.Command, err error) error {
+	var invalid *pflag.InvalidValueError
+	if errors.As(err, &invalid) && invalid.GetFlag().Name == "with-token" {
+		return &output.Error{
+			Code:    output.CodeUsage,
+			Message: "--with-token doesn't take a value; it reads the token from stdin",
+			Hint:    pipeHint,
+		}
+	}
+	return err
 }
 
 // orList joins items as English does: "a", "a or b", "a, b, or c".
@@ -316,6 +347,7 @@ func newRootCmd(a *app) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetFlagErrorFunc(flagError)
 
 	// There is deliberately no --token flag: tokens never go in argv, where
 	// they'd land in shell history and the process list. Use PCAL_TOKEN or

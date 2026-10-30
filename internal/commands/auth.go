@@ -41,7 +41,7 @@ func newAuthStatusCmd(a *app) *cobra.Command {
 		Long: "Show the calendar, who the token belongs to, what it may do (read or\n" +
 			"write), and where pcal keeps it. It asks the calendar, so it also checks\n" +
 			"that the token still works.",
-		Args: cobra.NoArgs,
+		Args: unknownCommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := a.open()
 			if err != nil {
@@ -115,7 +115,7 @@ func newLogoutCmd(a *app, use string) *cobra.Command {
 			"then forgotten here. A token you gave `pcal auth login --with-token` is only\n" +
 			"forgotten here, since whoever created it manages it; revoke it at\n" +
 			"/my/access_tokens or with `pcal tokens revoke ID`.",
-		Args: cobra.NoArgs,
+		Args: unknownCommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.logout(cmd.Context())
 		},
