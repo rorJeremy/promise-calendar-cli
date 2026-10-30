@@ -363,6 +363,9 @@ type harness struct {
 	hostname func() (string, error)
 	// loginWait bounds a browser login's wait (5 minutes unless set).
 	loginWait time.Duration
+	// revokeWait bounds revoking a token after a login (10 seconds unless
+	// set).
+	revokeWait time.Duration
 	// onStderrLine, when set, sees each line pcal prints on stderr as it's
 	// printed.
 	onStderrLine func(string)
@@ -398,6 +401,7 @@ func (h *harness) run(args ...string) result {
 		goos:          h.goos,
 		hostname:      h.hostname,
 		loginWait:     h.loginWait,
+		revokeWait:    h.revokeWait,
 	}
 	code := execute(a, newRootCmd(a), args)
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
@@ -461,4 +465,67 @@ func canceledContext(ctx context.Context) (context.Context, context.CancelFunc) 
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
 	return ctx, cancel
+}
+
+// keyboard stands in for the person pressing Ctrl-C at a moment a test
+// picks. Its interrupt is the app's interrupt seam: each context it hands
+// out listens until its stop function runs, as a signal.Notify channel
+// stays registered until signal.Stop, and press ends every context still
+// listening, as a signal reaches every registered channel.
+type keyboard struct {
+	mu        sync.Mutex
+	listening map[int]context.CancelFunc
+	next      int
+}
+
+func newKeyboard() *keyboard {
+	return &keyboard{listening: map[int]context.CancelFunc{}}
+}
+
+// interrupt is the app's interrupt seam.
+func (k *keyboard) interrupt(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	k.mu.Lock()
+	id := k.next
+	k.next++
+	k.listening[id] = cancel
+	k.mu.Unlock()
+	return ctx, func() {
+		k.mu.Lock()
+		delete(k.listening, id)
+		k.mu.Unlock()
+		cancel()
+	}
+}
+
+// press presses Ctrl-C and reports whether anything was listening for it.
+// With nothing listening, a real Ctrl-C ends pcal the usual way.
+func (k *keyboard) press() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, cancel := range k.listening {
+		cancel()
+	}
+	return len(k.listening) > 0
+}
+
+// failingSet is a credential store whose Set fails, as when
+// credentials.json can't be written.
+type failingSet struct {
+	credentialStore
+}
+
+func (failingSet) Set(string, auth.Credential) error {
+	return errors.New("writing credentials.json: permission denied")
+}
+
+// onSet is a credential store that calls before at the start of every Set.
+type onSet struct {
+	credentialStore
+	before func()
+}
+
+func (s onSet) Set(baseURL string, c auth.Credential) error {
+	s.before()
+	return s.credentialStore.Set(baseURL, c)
 }

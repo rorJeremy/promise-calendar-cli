@@ -25,6 +25,11 @@ import (
 // minutes.
 const loginTimeout = 5 * time.Minute
 
+// revokeTimeout bounds revoking a token after a login: the one it replaced,
+// or a new one it won't keep. The person is waiting for that cleanup, so
+// it's shorter than a request's 30 seconds.
+const revokeTimeout = 10 * time.Second
+
 // pipeHint says how to give `--with-token` its token.
 const pipeHint = "Pipe the token in: `echo … | pcal auth login --with-token`."
 
@@ -127,17 +132,17 @@ func (a *app) loginWithToken(ctx context.Context) error {
 		return err
 	}
 
-	ctx, stop := a.interruptible(ctx)
+	sigCtx, stop := a.interruptible(ctx)
 	defer stop()
-	token, err := a.readToken(ctx)
+	token, err := a.readToken(sigCtx)
 	if err != nil {
 		return err
 	}
 	if err := auth.CheckToken(token); err != nil {
 		return err
 	}
-	id, err := a.fetchIdentity(ctx, a.newClient(baseURL, token))
-	if ctx.Err() != nil {
+	id, err := a.fetchIdentity(sigCtx, a.newClient(baseURL, token))
+	if sigCtx.Err() != nil {
 		return errCanceled
 	}
 	if err != nil {
@@ -146,7 +151,7 @@ func (a *app) loginWithToken(ctx context.Context) error {
 	// From here the token is being stored, so Ctrl-C ends pcal the usual
 	// way rather than claiming nothing was stored.
 	stop()
-	if err := a.storeLogin(baseURL, auth.Credential{Token: token, Source: auth.SourceImported}); err != nil {
+	if err := a.storeLogin(ctx, baseURL, auth.Credential{Token: token, Source: auth.SourceImported}); err != nil {
 		return err
 	}
 	return a.reportLogin(baseURL, id)
@@ -221,8 +226,11 @@ func rejectedToken(err error, baseURL string) error {
 // loginWithBrowser logs in with the calendar's browser flow: OAuth's
 // authorization code with PKCE and a loopback redirect, or, when no browser
 // here can reach the person, the paste-the-callback flow. The code is
-// redeemed for a token, which is stored (source browser) and checked with
-// /my/identity. Ctrl-C before the token is stored cancels the login.
+// redeemed for a token, which is checked with /my/identity and then stored
+// (source browser). Ctrl-C before the token is stored cancels the login;
+// a new token the login doesn't keep, for that or any other reason, is
+// revoked (Jeremy's Gate 3c decisions; basecamp-cli's verifyAndStore and
+// discardGrant).
 func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 	if auth.EnvToken(a.getenv) != "" {
 		return errPCALTokenSet
@@ -266,24 +274,60 @@ func (a *app) loginWithBrowser(ctx context.Context, opts loginOptions) error {
 		return err
 	}
 
-	tok, err := auth.Exchange(sigCtx, a.newClient(baseURL, ""), code, pkce.Verifier)
+	// Ctrl-C doesn't cut the exchange off: once the code is sent, the
+	// server may mint a token, and an answer pcal stopped listening for
+	// would leave it live with no record of it. The client's timeout still
+	// bounds it.
+	tok, err := auth.Exchange(context.WithoutCancel(sigCtx), a.newClient(baseURL, ""), code, pkce.Verifier)
 	if sigCtx.Err() != nil {
-		return errCanceled
+		if err != nil {
+			return errCanceled
+		}
+		return a.canceledWithANewToken(ctx, baseURL, tok.Token)
 	}
 	if err != nil {
+		return err
+	}
+	// Check the new token before storing it, as the token login does, so
+	// a login that fails here leaves the old one as it was.
+	id, err := a.fetchIdentity(sigCtx, a.newClient(baseURL, tok.Token))
+	if sigCtx.Err() != nil {
+		return a.canceledWithANewToken(ctx, baseURL, tok.Token)
+	}
+	if err != nil {
+		a.discard(ctx, baseURL, tok.Token)
 		return err
 	}
 	// From here the token is being stored, so Ctrl-C ends pcal the usual
 	// way rather than claiming nothing was stored.
 	stop()
-	if err := a.storeLogin(baseURL, auth.Credential{Token: tok.Token, Source: auth.SourceBrowser}); err != nil {
-		return err
-	}
-	id, err := a.fetchIdentity(ctx, a.newClient(baseURL, tok.Token))
-	if err != nil {
+	if err := a.storeLogin(ctx, baseURL, auth.Credential{Token: tok.Token, Source: auth.SourceBrowser}); err != nil {
+		a.discard(ctx, baseURL, tok.Token)
 		return err
 	}
 	return a.reportLogin(baseURL, id)
+}
+
+// canceledWithANewToken reports a browser login canceled after the server
+// minted token: it's revoked, and the message says whether that worked.
+// Either way pcal exits 130.
+func (a *app) canceledWithANewToken(ctx context.Context, baseURL, token string) error {
+	if err := a.revokeBriefly(ctx, baseURL, token); err != nil {
+		return &output.Error{
+			Code:    output.CodeInterrupted,
+			Message: fmt.Sprintf("Login canceled, but pcal couldn't revoke the new token (%v); revoke it at %s/my/access_tokens.", err, baseURL),
+		}
+	}
+	return &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. The new token was revoked."}
+}
+
+// discard revokes token, a new one the login failed to keep, before the
+// login returns its error; failing that, it warns that the token may be
+// live.
+func (a *app) discard(ctx context.Context, baseURL, token string) {
+	if err := a.revokeBriefly(ctx, baseURL, token); err != nil {
+		a.warnf("couldn't revoke the new token (%v); revoke it at %s/my/access_tokens", err, baseURL)
+	}
 }
 
 // browserLogin is what one browser login asks the calendar for.
@@ -421,8 +465,10 @@ func loginTimedOut(message string) error {
 // storeLogin stores c for baseURL. A token an earlier `pcal login` minted
 // is revoked once the new one is stored, so it doesn't stay live on the
 // server (Jeremy's Gate 3 decision); an imported one is only replaced,
-// since whoever created it manages it.
-func (a *app) storeLogin(baseURL string, c auth.Credential) error {
+// since whoever created it manages it. The login has worked by then, so a
+// revoke that fails, takes too long, or is stopped with Ctrl-C is only a
+// warning (Gate 3c).
+func (a *app) storeLogin(ctx context.Context, baseURL string, c auth.Credential) error {
 	store, err := a.credentials()
 	if err != nil {
 		return err
@@ -434,11 +480,38 @@ func (a *app) storeLogin(baseURL string, c auth.Credential) error {
 		return err
 	}
 	if oldErr == nil && old.Source == auth.SourceBrowser && old.Token != c.Token {
-		if err := a.revoke(context.Background(), baseURL, old.Token); err != nil {
+		if err := a.revokeBriefly(ctx, baseURL, old.Token); err != nil {
 			a.warnf("couldn't revoke the token from your previous `pcal login` (%v); revoke it at %s/my/access_tokens", err, baseURL)
 		}
 	}
 	return nil
+}
+
+// revokeBriefly revokes token for cleanup after a login, giving up after
+// revokeTimeout or when the person presses Ctrl-C. Its error says why, in
+// words a warning can quote.
+func (a *app) revokeBriefly(ctx context.Context, baseURL, token string) error {
+	wait := a.revokeWait
+	if wait == 0 {
+		wait = revokeTimeout
+	}
+	sigCtx, stop := a.interruptible(ctx)
+	defer stop()
+	reqCtx, cancel := context.WithTimeout(sigCtx, wait)
+	defer cancel()
+
+	err := a.revoke(reqCtx, baseURL, token)
+	switch {
+	case err == nil:
+		return nil
+	case sigCtx.Err() != nil:
+		return errors.New("canceled with Ctrl-C")
+	case errors.Is(reqCtx.Err(), context.DeadlineExceeded):
+		// The client would say it timed out after its own 30 seconds.
+		return fmt.Errorf("no answer within %s", describeWait(wait))
+	default:
+		return err
+	}
 }
 
 // reportLogin prints who's logged in, after a note when --url picked the

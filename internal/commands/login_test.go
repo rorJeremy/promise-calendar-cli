@@ -331,6 +331,199 @@ func TestBrowserLoginRevokesTheTokenItReplaces(t *testing.T) {
 	require.Equal(t, cliToken, h.stored(cal.URL()).Token)
 }
 
+// The new token is checked with /my/identity before it's stored, as the
+// token login checks its token (Jeremy's Gate 3c decision; basecamp-cli's
+// verifyAndStore). When that fails, the new token is revoked and the old
+// login stays as it was, its token still live.
+func TestBrowserLoginWhenTheIdentityCheckFails(t *testing.T) {
+	cal := newFakeCalendar(t)
+	cal.route("GET /my/identity", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	h := newHarness(t, cal.URL())
+	old := auth.Credential{Token: goodToken, Source: auth.SourceBrowser, Store: auth.StoreKeyring}
+	require.NoError(t, h.credentials().Set(cal.URL(), old))
+
+	r := h.run("login")
+
+	require.Equal(t, 7, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+	env := decodeError(t, r.stdout)
+	require.Equal(t, "api_error", env.Error.Code)
+	require.Equal(t, "Internal Server Error", env.Error.Message)
+	requests := cal.requests()
+	require.Equal(t, []request{
+		{Method: "GET", Path: "/my/identity", Auth: "Bearer " + cliToken},
+		{Method: "DELETE", Path: "/my/current_access_token", Auth: "Bearer " + cliToken},
+	}, requests[len(requests)-2:])
+	require.NotContains(t, requests, request{Method: "DELETE", Path: "/my/current_access_token", Auth: "Bearer " + goodToken})
+	require.Equal(t, old, h.stored(cal.URL()))
+}
+
+// Ctrl-C while POST /cli/token is in flight doesn't cut the request off,
+// since the server may already have minted the token: pcal waits for the
+// answer (the client's timeout bounds it) and revokes a token that came
+// back, so the login leaves nothing live with no record of it. So does
+// Ctrl-C while the new token is checked (Jeremy's Gate 3c decision;
+// basecamp-cli's discardGrant).
+func TestBrowserLoginCanceledAfterTheCodeIsSent(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(*fakeCalendar, *keyboard)
+		wantStderr func(baseURL string) string
+		wantRevoke bool
+	}{
+		{
+			name: "during the exchange",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("POST /cli/token", func(w http.ResponseWriter, r *http.Request) {
+					kb.press()
+					cal.redeem(w, r)
+				})
+			},
+			wantStderr: func(string) string { return "\nLogin canceled. The new token was revoked.\n" },
+			wantRevoke: true,
+		},
+		{
+			name: "during the exchange, and the revoke fails",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("POST /cli/token", func(w http.ResponseWriter, r *http.Request) {
+					kb.press()
+					cal.redeem(w, r)
+				})
+				cal.route("DELETE /my/current_access_token", func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusBadGateway)
+				})
+			},
+			wantStderr: func(baseURL string) string {
+				return "\nLogin canceled, but pcal couldn't revoke the new token (Bad Gateway); revoke it at " + baseURL + "/my/access_tokens.\n"
+			},
+			wantRevoke: true,
+		},
+		{
+			// The line quotes the server, so its control characters are
+			// shown as escapes, like a warning's.
+			name: "during the exchange, and the revoke fails with control characters",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("POST /cli/token", func(w http.ResponseWriter, r *http.Request) {
+					kb.press()
+					cal.redeem(w, r)
+				})
+				cal.route("DELETE /my/current_access_token", func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(`{"error":"\u001b]0;pwned\u0007"}`))
+				})
+			},
+			wantStderr: func(baseURL string) string {
+				return "\nLogin canceled, but pcal couldn't revoke the new token (\\x1b]0;pwned\\a); revoke it at " + baseURL + "/my/access_tokens.\n"
+			},
+			wantRevoke: true,
+		},
+		{
+			name: "during an exchange that fails",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("POST /cli/token", func(w http.ResponseWriter, _ *http.Request) {
+					kb.press()
+					cal.serve(w, http.StatusBadRequest, "error_invalid_grant.json")
+				})
+			},
+			wantStderr: func(string) string { return "\nLogin canceled. Nothing was stored.\n" },
+		},
+		{
+			name: "while the new token is checked",
+			setup: func(cal *fakeCalendar, kb *keyboard) {
+				cal.route("GET /my/identity", func(w http.ResponseWriter, _ *http.Request) {
+					kb.press()
+					cal.serve(w, http.StatusOK, "identity.json")
+				})
+			},
+			wantStderr: func(string) string { return "\nLogin canceled. The new token was revoked.\n" },
+			wantRevoke: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			kb := newKeyboard()
+			tt.setup(cal, kb)
+			h := newHarness(t, cal.URL())
+			h.interrupt = kb.interrupt
+
+			r := h.run("login")
+
+			require.Equal(t, 130, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			require.Empty(t, r.stdout)
+			require.True(t, strings.HasSuffix(r.stderr, tt.wantStderr(cal.URL())), "stderr: %q", r.stderr)
+			revoke := request{Method: "DELETE", Path: "/my/current_access_token", Auth: "Bearer " + cliToken}
+			if tt.wantRevoke {
+				require.Contains(t, cal.requests(), revoke)
+			} else {
+				require.NotContains(t, cal.requests(), revoke)
+			}
+			h.requireNothingStored(cal.URL())
+		})
+	}
+}
+
+// A new token pcal can't store is revoked before the store's error is
+// returned (Jeremy's Gate 3c decision); a failed revoke is a warning.
+func TestBrowserLoginWhenStoringFails(t *testing.T) {
+	tests := []struct {
+		name       string
+		revoke     int
+		wantStderr func(baseURL string) string
+	}{
+		{"the new token is revoked", http.StatusNoContent, func(string) string { return "" }},
+		{"the revoke fails too", http.StatusBadGateway, func(baseURL string) string {
+			return "warning: couldn't revoke the new token (Bad Gateway); revoke it at " + baseURL + "/my/access_tokens\n"
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			cal.route("DELETE /my/current_access_token", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.revoke)
+			})
+			h := newHarness(t, cal.URL())
+			h.store = failingSet{h.credentials()}
+
+			r := h.run("login")
+
+			require.Equal(t, 7, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			env := decodeError(t, r.stdout)
+			require.Equal(t, "api_error", env.Error.Code)
+			require.Equal(t, "writing credentials.json: permission denied", env.Error.Message)
+			require.Contains(t, cal.requests(), request{Method: "DELETE", Path: "/my/current_access_token", Auth: "Bearer " + cliToken})
+			require.True(t, strings.HasSuffix(r.stderr, "…\n"+tt.wantStderr(cal.URL())), "stderr: %q", r.stderr)
+			h.requireNothingStored(cal.URL())
+		})
+	}
+}
+
+// Once the token is being stored, nothing listens for Ctrl-C, so it ends
+// pcal the usual way rather than claiming nothing was stored. The bounded
+// revoke of a replaced token listens again (Gate 3c).
+func TestLoginStopsCatchingCtrlCBeforeStoring(t *testing.T) {
+	for _, args := range [][]string{{"login"}, {"login", "--with-token"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			h := newHarness(t, cal.URL())
+			h.stdin = strings.NewReader(goodToken)
+			kb := newKeyboard()
+			h.interrupt = kb.interrupt
+			var heard []bool
+			h.store = onSet{h.credentials(), func() { heard = append(heard, kb.press()) }}
+
+			r := h.run(args...)
+
+			require.Equal(t, 0, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			require.Equal(t, []bool{false}, heard, "something listened for Ctrl-C while the token was stored")
+		})
+	}
+}
+
 // --- the paste-the-callback flow ---
 
 // On a host with no browser for the person (here an SSH session), pcal

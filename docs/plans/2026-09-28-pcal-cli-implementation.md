@@ -107,6 +107,30 @@ open, each checked against fizzy-cli (65b13a2) and basecamp-cli (8655e70):
   theme with no colors (bold, faint, reverse), so they read on light and
   dark backgrounds alike, as pcal's other output does (Phase 6).
 
+**Reviewed 2026-10-29 (Gate 3b), fixed 2026-10-30 (Gate 3c).** An
+independent review of the Phase 6–8 code from a cleared context found 16
+issues, G3b-F1–F16 (3 Medium, 9 Low, 4 Nit; nothing Critical or High), and
+Gate 3c fixed them, test first, in five commits. Jeremy's decisions on the
+choices the review left open:
+- F1: Ctrl-C doesn't cut off `POST /cli/token`. The exchange runs on
+  `context.WithoutCancel`, still bounded by the client's 30-second timeout,
+  and a token that comes back after Ctrl-C is revoked: "Login canceled.
+  The new token was revoked.", or "Login canceled, but pcal couldn't
+  revoke the new token (…); revoke it at <base>/my/access_tokens.", both
+  exit 130. A new token the login fails to store is revoked before the
+  store's error is returned, with a warning if that fails (Phase 7).
+- F4: the browser login checks the new token before storing it, as the
+  token login and basecamp-cli's `verifyAndStore` do: exchange →
+  `/my/identity` → store → revoke the old token. If the check fails, the
+  new token is revoked and the check's error returned; nothing is stored,
+  and the old token stays (Phase 7).
+The other findings took the review's proposed fix. Among them: revoking
+the token a login replaced is bounded at 10 seconds and Ctrl-C stops it,
+with the usual warning either way (F8). Choices the decisions didn't spell
+out: the revokes of a new token use the same 10-second bound, and a Ctrl-C
+during the old token's revoke leaves the new login standing (exit 0, with
+the warning).
+
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
 `mise exec -- make check` green before its one commit. Commit messages carry
@@ -458,8 +482,10 @@ Commit: "Pin API contract with golden JSON".
   --with-token`, and the error never repeats the token (basecamp-cli's
   `cobra.NoArgs` does). `PCAL_TOKEN` set → exit 1 before reading anything
   (Gate 3). Ctrl-C or Esc at the prompt → exit 130 (Gate 3). Replacing a
-  token `pcal login` minted revokes it (Gate 3). After a login with `--url`,
-  a note says pcal doesn't save it (Gate 3).
+  token `pcal login` minted revokes it (Gate 3), within 10 seconds, and
+  Ctrl-C stops that; a failure, the timeout, or Ctrl-C there only warns,
+  since the new login has worked (Gate 3c). After a login with `--url`, a
+  note says pcal doesn't save it (Gate 3).
 - `pcal auth` is the first group command. cobra shows help (exit 0) for any
   word after a command it can't run, before checking arguments (cobra
   1.10.2 `command.go:955`), so a group runs to show help and its `Args` is
@@ -558,8 +584,14 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
   gracefully, so the browser always gets it. Timeout after 5 minutes → exit
   3, "timed out waiting for you to approve pcal in the browser".
 - `POST /cli/token` with a **flat** JSON body `{"code","code_verifier"}` → 201
-  `{token, permission, user{id,name}}` → store → `/my/identity` → "Logged in
-  as <name> (<permission>)".
+  `{token, permission, user{id,name}}` → `/my/identity` with the new token →
+  store → revoke the token it replaced → "Logged in as <name>
+  (<permission>)". The new token is checked before it's stored, as the
+  token login's is (Gate 3c; basecamp-cli's `verifyAndStore`). A new token
+  the login doesn't keep is revoked, within 10 seconds (basecamp-cli's
+  `discardGrant`): when `/my/identity` fails (its error is returned, and the
+  old token stays as it was), and when the store fails (its error is
+  returned); a failed revoke there is a warning.
   - 400 `invalid_grant` (unknown, expired, reused, or wrong verifier; every
     attempt consumes the code) → exit 3 "that login code expired or was
     already used", hint "Run `pcal login` again."
@@ -568,10 +600,17 @@ basecamp-cli's `buildLoginCmd`): the browser login, or the token login with
     No automatic retry.
 - `--read-only` → `permission=read`. `--url` overrides the base.
 - The stored credential has source `browser`, and it replaces a token an
-  earlier `pcal login` minted, which is revoked (Gate 3).
+  earlier `pcal login` minted, which is revoked (Gate 3), within 10
+  seconds; a failure, the timeout, or Ctrl-C there only warns (Gate 3c).
 - `PCAL_TOKEN` set → exit 1 before anything opens (Gate 3). Ctrl-C while
   waiting for the browser or the pasted address → exit 130, nothing stored
-  (Gate 3). Listening for Ctrl-C stops just before the token is stored.
+  (Gate 3). Ctrl-C doesn't cut off `POST /cli/token`, which may already
+  have minted a token: it runs on `context.WithoutCancel`, bounded by the
+  client's 30 seconds. A token that comes back after Ctrl-C (or Ctrl-C
+  while it's checked) is revoked: "Login canceled. The new token was
+  revoked.", or "Login canceled, but pcal couldn't revoke the new token
+  (…); revoke it at <base>/my/access_tokens.", exit 130 either way (Gate
+  3c). Listening for Ctrl-C stops just before the token is stored.
 - Messages (the link, "Opening your browser…", the wait) go to stderr, so
   `pcal login --json` still ends with an envelope on stdout (basecamp-cli
   prints them on stdout and refuses `--json`).

@@ -60,7 +60,7 @@ type app struct {
 	// pcal's config directory.
 	store credentialStore
 	// interrupt, when set, replaces catching Ctrl-C (SIGINT) as the end of a
-	// login's waits.
+	// login's waits and of the revokes after it (see interruptible).
 	interrupt func(context.Context) (context.Context, context.CancelFunc)
 	// clientOptions are passed to every client (shorter timeouts in tests).
 	clientOptions client.Options
@@ -75,6 +75,9 @@ type app struct {
 	// loginWait bounds how long a browser login waits for the person
 	// (loginTimeout when zero).
 	loginWait time.Duration
+	// revokeWait bounds revoking a token after a login (revokeTimeout when
+	// zero).
+	revokeWait time.Duration
 }
 
 // Execute runs pcal with the process's arguments and standard streams and
@@ -130,8 +133,10 @@ func execute(a *app, root *cobra.Command, args []string) int {
 	if e.Code == output.CodeInterrupted {
 		// Canceling isn't a failure: one line on stderr, below whatever
 		// prompt was showing, and never the envelope (as basecamp-cli's
-		// login; its root exits 130 without rendering an error).
-		_, _ = fmt.Fprintf(a.streams.Err, "\n%s\n", e.Message)
+		// login; its root exits 130 without rendering an error). The line
+		// may quote the server, as when a canceled login couldn't revoke
+		// its new token.
+		_, _ = fmt.Fprintf(a.streams.Err, "\n%s\n", output.Visible(e.Message))
 		return e.ExitCode()
 	}
 	if e.Code == output.CodeUsage && e.Hint == "" {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -305,6 +306,66 @@ func TestLoginWarnsWhenTheOldTokenCantBeRevoked(t *testing.T) {
 	require.Equal(t, "warning: couldn't revoke the token from your previous `pcal login` (Internal Server Error); "+
 		"revoke it at "+cal.URL()+"/my/access_tokens\n", r.stderr)
 	require.Equal(t, goodToken, h.stored(cal.URL()).Token)
+}
+
+// Revoking the token a login replaced is cleanup after the login has
+// worked, so it's bounded (10 seconds) and Ctrl-C stops it. Either way the
+// new login stands, and the warning says the old token may still be live
+// (Gate 3c).
+func TestLoginGivesUpOnRevokingTheOldToken(t *testing.T) {
+	tests := []struct {
+		name    string
+		wait    time.Duration
+		press   bool
+		wantWhy string
+	}{
+		{"no answer", 200 * time.Millisecond, false, "no answer within 200ms"},
+		{"Ctrl-C", 5 * time.Second, true, "canceled with Ctrl-C"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			kb := newKeyboard()
+			cal.route("DELETE /my/current_access_token", func(_ http.ResponseWriter, r *http.Request) {
+				if tt.press {
+					require.True(t, kb.press(), "nothing listened for Ctrl-C during the revoke")
+				}
+				<-r.Context().Done()
+			})
+			h := newHarness(t, cal.URL())
+			h.interrupt = kb.interrupt
+			h.revokeWait = tt.wait
+			require.NoError(t, h.credentials().Set(cal.URL(), auth.Credential{Token: "pcal_old", Source: auth.SourceBrowser}))
+			h.stdin = strings.NewReader(goodToken)
+
+			start := time.Now()
+			r := h.run("auth", "login", "--with-token")
+
+			require.Equal(t, 0, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			require.Less(t, time.Since(start), 3*time.Second)
+			require.Equal(t, "warning: couldn't revoke the token from your previous `pcal login` ("+tt.wantWhy+"); "+
+				"revoke it at "+cal.URL()+"/my/access_tokens\n", r.stderr)
+			require.Equal(t, "Logged in as Admin User (write)", decodeEnvelope(t, r.stdout).Summary)
+			require.Equal(t, goodToken, h.stored(cal.URL()).Token)
+		})
+	}
+}
+
+// A token imported with --with-token that can't be stored isn't revoked:
+// whoever created it manages it.
+func TestLoginWithTokenWhenStoringFails(t *testing.T) {
+	cal := newFakeCalendar(t)
+	h := newHarness(t, cal.URL())
+	h.stdin = strings.NewReader(goodToken)
+	h.store = failingSet{h.credentials()}
+
+	r := h.run("auth", "login", "--with-token")
+
+	require.Equal(t, 7, r.code, "stdout: %s", r.stdout)
+	require.Equal(t, "writing credentials.json: permission denied", decodeError(t, r.stdout).Error.Message)
+	require.Equal(t, []request{{Method: "GET", Path: "/my/identity", Auth: "Bearer " + goodToken}}, cal.requests())
+	h.requireNothingStored(cal.URL())
 }
 
 // A warning can quote the server, so its control characters are shown as

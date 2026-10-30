@@ -133,14 +133,21 @@ pcal version | completion {bash,zsh,fish} | skill install
    (print the URL too, in case the browser doesn't open).
 3. Wait up to 5 minutes for `/callback?code=&state=`. Reject a state mismatch.
    Handle `error=access_denied`. Serve a small "You can close this tab" page.
-4. `POST /cli/token {code, code_verifier}` → token. Store it, call
-   `/my/identity`, print "Logged in as <name> (write)".
+4. `POST /cli/token {code, code_verifier}` → token. Check it with
+   `/my/identity`, store it, revoke the token it replaces, and print
+   "Logged in as <name> (write)". A new token the login doesn't keep (the
+   check fails, the store fails, or Ctrl-C) is revoked, so a login never
+   leaves a live token with no record of it (Jeremy's Gate 3c decisions,
+   as basecamp-cli's `verifyAndStore` and `discardGrant`).
 
 Ctrl-C while a login waits (for the browser, a pasted address, or the
 masked `--with-token` prompt) cancels it: "Login canceled. Nothing was
 stored." and exit 130, without the JSON envelope, as basecamp-cli's login
-does (Jeremy's Gate 3 decision). Messages go to stderr, so the result on
-stdout can still be JSON.
+does (Jeremy's Gate 3 decision). Once the code is sent, Ctrl-C doesn't cut
+the exchange off, since the server may already have minted the token; a
+token that comes back is revoked, and the message says whether that worked
+(Gate 3c). Messages go to stderr, so the result on stdout can still be
+JSON.
 
 **Headless fallback** (as in basecamp-cli, `LoginOptions.defaults` +
 `readCallbackInput`): on an SSH session, with `CI` set, or on Unix without
@@ -159,7 +166,9 @@ locally and says the token may still be live). A token imported with
 manages it. If the local forget fails (a keyring error), logout fails with
 exit 7 and says what happened on the server too (Jeremy's Gate 3 decision).
 A login that replaces a token an earlier `pcal login` minted revokes the old
-one, so logging in again leaves no stray live token (Gate 3).
+one, so logging in again leaves no stray live token (Gate 3). That revoke
+is bounded at 10 seconds and Ctrl-C stops it; the new login stands either
+way, and a warning says the old token may still be live (Gate 3c).
 
 **Storage:** OS keyring (service `pcal`, key = base URL). The first keyring
 call in a run decides where credentials live for the rest of it (Jeremy's
