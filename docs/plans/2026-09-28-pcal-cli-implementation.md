@@ -158,7 +158,12 @@ keeps naming `pcal tokens revoke ID` (Phase 12 has a reminder), the port
 hint offers `--with-token` instead of `--remote` (which uses the same port
 range), a control character in a token says how to paste it, and
 `errCanceled` is `errLoginCanceled`, since Phase 9's prompts need their
-own. Choices the decisions didn't spell
+own. Every mutant that survived the review on a behavior now has a test
+that catches it (F12): the ones batches 1–3 didn't already cover are the
+token login's Ctrl-C while checking the token and while a pipe is open, an
+empty answer at the prompt, `--with-token` with `--local` or
+`--no-browser`, `Close` letting a page finish, escaped notes, and
+`--repeat`'s "on". Choices the decisions didn't spell
 out: the revokes of a new token use the same 10-second bound, and a Ctrl-C
 (or SIGTERM) during the old token's revoke leaves the new login standing
 (exit 0, with the warning); a SIGTERM after the code is sent says "Login

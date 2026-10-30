@@ -287,6 +287,46 @@ func TestCallbackServerIgnoresOtherPaths(t *testing.T) {
 	require.Equal(t, "c0de", code)
 }
 
+// pcal closes the server as soon as Wait has the answer, which can be
+// before the page is sent. Close lets that page finish, so the browser
+// always gets it (Gate 3b F12, P7-j2): here the handler is held after
+// handing over the answer until Close is under way.
+func TestCallbackServerCloseLetsAPageFinish(t *testing.T) {
+	s := startCallbackServer(t, "st")
+	release := make(chan struct{})
+	s.answered = func() { <-release }
+	type visited struct {
+		status int
+		page   string
+		err    error
+	}
+	got := make(chan visited, 1)
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/callback?code=c0de&state=st", s.Port())) //nolint:noctx // a test's browser
+		if err != nil {
+			got <- visited{err: err}
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		page, err := io.ReadAll(resp.Body)
+		got <- visited{resp.StatusCode, string(page), err}
+	}()
+
+	code, err := waitFor(t, s)
+	require.NoError(t, err)
+	require.Equal(t, "c0de", code)
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	v := <-got
+	require.NoError(t, v.err)
+	require.Equal(t, http.StatusOK, v.status)
+	require.Contains(t, v.page, "You can close this tab")
+	require.NoError(t, <-closed)
+}
+
 func TestCallbackServerWaitEndsWithTheContext(t *testing.T) {
 	s := startCallbackServer(t, "st")
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

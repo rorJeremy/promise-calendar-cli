@@ -280,6 +280,8 @@ func TestRepeatErrors(t *testing.T) {
 		// Weekly takes plain days; monthly one day with a position.
 		"weekly on", "weekly on the 1st sun", "weekly on funday", "monthly on sun", "monthly on the 6th sun",
 		"monthly on the 1st sun,mon", "monthly on the 1st", "monthly on the", "monthly on the last day", "weekly sun", "every other",
+		// Days and positions come after "on" (Gate 3b F12, P8-l).
+		"weekly at sun", "every 2 weeks at tue", "monthly at the 1st sun",
 		"every 99999999999999999999 days",
 	} {
 		t.Run(in, func(t *testing.T) {

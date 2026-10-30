@@ -183,6 +183,10 @@ type CallbackServer struct {
 	state    string
 	once     sync.Once
 	result   chan callbackResult
+	// answered, when set, runs in the handler after Wait has the answer and
+	// before the page is sent: a test holds the handler there to show that
+	// Close lets the page finish.
+	answered func()
 }
 
 // ListenForCallback starts a CallbackServer on 127.0.0.1 and a port the OS
@@ -240,6 +244,9 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		_, _ = fmt.Fprint(w, page("pcal couldn't finish logging in", sentence(res.err.Error())+" Check your terminal."))
 	}
 	s.result <- res
+	if s.answered != nil {
+		s.answered()
+	}
 }
 
 // Port returns the port the server listens on.

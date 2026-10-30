@@ -209,6 +209,61 @@ func TestLoginWithTokenCanceledAtThePrompt(t *testing.T) {
 	}
 }
 
+// Enter at the masked prompt with nothing typed (or only spaces) is no
+// token: exit 1, nothing sent.
+func TestLoginWithTokenEmptyAtThePrompt(t *testing.T) {
+	cal := newFakeCalendar(t)
+	h := newHarness(t, cal.URL())
+	h.stdin = strings.NewReader("   \r")
+	h.inTTY, h.errTTY = true, true
+
+	r := h.run("login", "--with-token")
+
+	require.Equal(t, 1, r.code, "stdout: %s", r.stdout)
+	env := decodeError(t, r.stdout)
+	require.Equal(t, "usage", env.Error.Code)
+	require.Equal(t, "no token entered", env.Error.Message)
+	require.Equal(t, pipeHint, env.Error.Hint)
+	require.Empty(t, cal.requests())
+}
+
+// Ctrl-C while a pipe is still open (`cat | pcal login --with-token`,
+// waiting for EOF) cancels the login like Ctrl-C at the prompt.
+func TestLoginWithTokenCanceledWhileReadingAPipe(t *testing.T) {
+	cal := newFakeCalendar(t)
+	h := newHarness(t, cal.URL())
+	stdin, typed := io.Pipe()
+	t.Cleanup(func() { _ = typed.Close() })
+	h.stdin = stdin
+	h.interrupt = canceledContext
+
+	r := h.run("login", "--with-token")
+
+	require.Equal(t, 130, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+	require.True(t, strings.HasSuffix(r.stderr, "\nLogin canceled. Nothing was stored.\n"), "stderr: %q", r.stderr)
+	require.Empty(t, cal.requests())
+}
+
+// Ctrl-C while the token is checked with /my/identity cancels the login:
+// nothing is stored, even if the server's answer arrives anyway.
+func TestLoginWithTokenCanceledWhileTheTokenIsChecked(t *testing.T) {
+	cal := newFakeCalendar(t)
+	kb := newKeyboard()
+	cal.route("GET /my/identity", func(w http.ResponseWriter, _ *http.Request) {
+		kb.press()
+		cal.serve(w, http.StatusOK, "identity.json")
+	})
+	h := newHarness(t, cal.URL())
+	h.stdin = strings.NewReader(goodToken)
+	h.interrupt = kb.interrupt
+
+	r := h.run("login", "--with-token")
+
+	require.Equal(t, 130, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+	require.True(t, strings.HasSuffix(r.stderr, "\nLogin canceled. Nothing was stored.\n"), "stderr: %q", r.stderr)
+	h.requireNothingStored(cal.URL())
+}
+
 func TestLoginWithTokenRefusals(t *testing.T) {
 	// Never `echo … |`, which puts the token in shell history too (Gate 3b
 	// F10).
@@ -506,6 +561,17 @@ func TestWarningsShowControlCharactersAsEscapes(t *testing.T) {
 	require.Equal(t, 0, r.code, "stdout: %s", r.stdout)
 	require.Contains(t, r.stderr, `(\x1b]0;pwned\a)`)
 	require.NotContains(t, r.stderr, "\x1b")
+}
+
+// A note can quote what it's given, so its control characters are shown
+// as escapes too, like a warning's (Gate 3b F12, U4).
+func TestNotesShowControlCharactersAsEscapes(t *testing.T) {
+	var stderr strings.Builder
+	a := &app{streams: Streams{Err: &stderr}}
+
+	a.notef("the calendar said %s", "\x1b]0;pwned\a")
+
+	require.Equal(t, "note: the calendar said \\x1b]0;pwned\\a\n", stderr.String())
 }
 
 // --- auth status ---

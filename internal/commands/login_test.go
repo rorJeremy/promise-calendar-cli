@@ -301,6 +301,8 @@ func TestBrowserLoginRefusals(t *testing.T) {
 		{"--remote with --local", []string{"login", "--remote", "--local"}, nil, "--remote and --local can't be used together"},
 		{"--with-token with --remote", []string{"login", "--with-token", "--remote"}, nil, "--with-token can't be used with --read-only, --remote, --local, or --no-browser"},
 		{"--with-token with --read-only", []string{"auth", "login", "--with-token", "--read-only"}, nil, "--with-token can't be used with --read-only, --remote, --local, or --no-browser"},
+		{"--with-token with --local", []string{"login", "--with-token", "--local"}, nil, "--with-token can't be used with --read-only, --remote, --local, or --no-browser"},
+		{"--with-token with --no-browser", []string{"login", "--with-token", "--no-browser"}, nil, "--with-token can't be used with --read-only, --remote, --local, or --no-browser"},
 	}
 
 	for _, tt := range tests {
