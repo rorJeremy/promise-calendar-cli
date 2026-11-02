@@ -14,6 +14,7 @@ package prompt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	tea "charm.land/bubbletea/v2"
@@ -88,6 +89,12 @@ func (p Prompter) Password(ctx context.Context, title string) (string, error) {
 // instead of drawing two buttons: with no attributes, the chosen button
 // looks like the other one (Jeremy's Gate 4 decision). Password stays
 // drawn, because the cursor still shows where the answer goes.
+//
+// On that one line, Esc cancels (Jeremy's Phase 9 review). huh's accessible
+// confirm cannot: it reads a line and has no way to report a cancel
+// (huh v2.0.3 field_confirm.go RunAccessible, accessibility.go PromptString),
+// so the keys are read here and huh only sees a finished line. Enter,
+// Ctrl-D, y, and n are the same answers huh would give.
 func (p Prompter) Confirm(ctx context.Context, title string, def bool) (bool, error) {
 	value := def
 	confirm := huh.NewConfirm().Title(title).Value(&value)
@@ -95,8 +102,29 @@ func (p Prompter) Confirm(ctx context.Context, title string, def bool) (bool, er
 	if p.Plain {
 		asking.Accessible = true
 	}
+	var keys *escReader
+	if asking.Accessible {
+		keys = &escReader{in: asking.In}
+		asking.In = keys
+		// A canonical terminal holds Esc until Enter, which is the whole
+		// problem. Leave signals and newline handling in place so Ctrl-C
+		// is still SIGINT and Enter is still a newline.
+		if fd := terminalFd(p.In); fd >= 0 {
+			restore, changed, err := setCbreak(fd)
+			if err != nil {
+				return def, fmt.Errorf("preparing the terminal: %w", err)
+			}
+			defer restore()
+			if changed {
+				keys.echo = asking.Out
+			}
+		}
+	}
 	if err := asking.run(ctx, huh.NewForm(huh.NewGroup(confirm))); err != nil {
 		return def, err
+	}
+	if keys != nil && keys.canceled {
+		return def, ErrCanceled
 	}
 	return value, nil
 }

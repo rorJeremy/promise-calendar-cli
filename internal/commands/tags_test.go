@@ -654,6 +654,44 @@ func TestTagsDeleteDrawn(t *testing.T) {
 	}
 }
 
+// Esc on the accessible line cancels the delete: exit 130, the
+// confirmation's own sentence, no envelope, and no DELETE. Enter, Ctrl-D,
+// y, and n are covered above and stay as they are (Jeremy's Phase 9 review).
+func TestTagsDeleteAccessibleEscCancels(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		val  string
+	}{
+		{"ACCESSIBLE", "ACCESSIBLE", "1"},
+		{"TERM=dumb", "TERM", "dumb"},
+		{"NO_COLOR", "NO_COLOR", "1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			installTags(t, cal, golden(t, "tags.json"))
+			h := tagsHarness(t, cal)
+			h.inTTY = true
+			h.errTTY = true
+			h.env[tt.key] = tt.val
+			h.stdin = strings.NewReader("\x1b")
+
+			r := h.run("tags", "delete", "Worship")
+
+			require.Equal(t, 130, r.code, "stdout: %s\nstderr: %s", r.stdout, r.stderr)
+			require.Empty(t, r.stdout)
+			require.Contains(t, r.stderr, "Canceled. Nothing was deleted.")
+			require.NotContains(t, r.stderr, "invalid")
+			require.NotContains(t, r.stdout+r.stderr, "Login canceled")
+			require.NotContains(t, r.stdout+r.stderr, `"ok"`)
+			for _, req := range cal.requests() {
+				require.NotEqual(t, "DELETE", req.Method)
+			}
+		})
+	}
+}
+
 func TestTagsDeleteCanceled(t *testing.T) {
 	tests := []struct {
 		name string

@@ -137,6 +137,13 @@ func TestAccessibleConfirm(t *testing.T) {
 		{"no", "n\n", true, false},
 		{"Enter takes the default (no)", "\n", false, false},
 		{"Enter takes the default (yes)", "\n", true, true},
+		// A terminal without ICRNL delivers Enter as CR. Same answer as NL.
+		{"Enter is CR", "\r", false, false},
+		{"yes then CR", "y\r", false, true},
+		// CR submits, as Enter does. What follows is a later line, not part
+		// of this answer (huh trims a trailing CR, so "y\r" alone cannot
+		// tell the difference).
+		{"CR submits before the rest", "y\rn\n", false, true},
 		// huh's accessible confirm treats end of input as the default
 		// (accessibility.go PromptString). Ctrl-D is that EOF, so a No
 		// default can't be accepted by it (basecamp-cli forms.go:98-112).
@@ -171,6 +178,33 @@ func TestPlainConfirmIsAccessible(t *testing.T) {
 	require.True(t, got)
 	require.Contains(t, out.String(), `Delete tag "Kids"? [y/N]`)
 	require.NotContains(t, out.String(), "\x1b")
+}
+
+// Esc at the accessible line cancels, the same as Esc on a drawn confirm.
+// huh's own prompt has no cancel: it reads a line, and Esc is just text
+// (Jeremy's Phase 9 review).
+func TestAccessibleConfirmEscCancels(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		plain bool
+	}{
+		{"ACCESSIBLE", "\x1b", false},
+		{"Esc then Enter", "\x1b\n", false},
+		{"plain", "\x1b", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			p := Prompter{In: strings.NewReader(tt.input), Out: &out, Accessible: !tt.plain, Plain: tt.plain}
+
+			_, err := p.Confirm(testContext(t), `Delete tag "Kids"?`, false)
+
+			require.ErrorIs(t, err, ErrCanceled)
+			require.Contains(t, out.String(), `Delete tag "Kids"? [y/N]`)
+			require.NotContains(t, out.String(), "invalid")
+		})
+	}
 }
 
 func TestConfirmCanceled(t *testing.T) {

@@ -253,10 +253,12 @@ dot), because it's also the credential key.
   exits 0: "Nothing was deleted.", with `{"deleted": false}` (rotate:
   `{"rotated": false}`). Esc, Ctrl-C, or SIGTERM cancels instead: one line
   on stderr, "Canceled. Nothing was deleted." (rotate: "Canceled. The
-  website token wasn't changed."), exit 130 or 143, no envelope. That is
+  website token wasn't changed."), exit 130 or 143, no envelope. Esc cancels
+  on the accessible line too, at the Esc itself (Jeremy's Phase 9 review);
+  Enter, Ctrl-D, y, and n on that line are unchanged. That is
   not exit 0, which is what basecamp-cli does for a canceled confirmation
   (Jeremy's Gate 4 decision). The question names the tag, or the event's
-  title and date.
+  title and date. Every confirmation uses this rule.
 
 ### Exit codes (fizzy-cli's numbers; 400 and 422 → 1)
 

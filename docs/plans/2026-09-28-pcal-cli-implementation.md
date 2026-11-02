@@ -274,6 +274,15 @@ Tags):
   `--image` checks the file's size before uploading: over 10 MB is a usage
   error naming the limit. The file type is left to the server's 422.
 - Stop after Phase 9 for review, then do Phases 10–13.
+- Phase 9 review (2026-11-02): Esc cancels an accessible confirmation too
+  (`ACCESSIBLE`, `TERM=dumb`, and the plain one-line Confirm), at the Esc
+  itself, with no Enter after it. Same result as a drawn Esc: "Canceled.
+  Nothing was deleted." on stderr, exit 130, no envelope, and no request.
+  huh v2.0.3's accessible confirm cannot say cancel (`RunAccessible` reads
+  a line; Esc is invalid text, and EOF is the default), so pcal reads the
+  keys and hands huh only a finished line. Enter, Ctrl-D, y, and n are
+  unchanged. Every later confirmation (event delete, RSVP delete, token
+  revoke, website-token rotate) uses that same prompt.
 
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
@@ -923,7 +932,10 @@ envelope. That error is `errTagDeleteCanceled` or `errTagDeleteTerminated`,
 not the login's, and not exit 0 as in basecamp-cli
 (`internal/commands/skill.go:164–176`, `chat.go:1284`). When prompts are
 plain, the question is huh's accessible line, not two drawn buttons
-(Gate 4). Password prompts stay drawn.
+(Gate 4). Password prompts stay drawn. Esc on that line cancels
+immediately (Phase 9 review), the same exit 130 as a drawn Esc. huh's own
+line prompt has no cancel, so the keys are read in `internal/prompt` and
+huh only sees a finished line; Enter, Ctrl-D, y, and n stay huh's answers.
 Red: each against the fake server and golden JSON. 403 `read_only_token` →
 exit 4. 404 → exit 2.
 
@@ -997,8 +1009,9 @@ Gate 4: `--description-file` (`-` for stdin) reads at most 1 MiB; more is a
 usage error, like `--with-token`'s 4096-byte limit. `--image` checks the
 file's size before uploading; over 10 MB is a usage error that names the
 limit. The file type is left to the server's 422. Delete confirms as Phase
-9 does, and the question names the event's title and date, saying when the
-whole series goes.
+9 does, including Esc on the accessible line (Phase 9 review), and the
+question names the event's title and date, saying when the whole series
+goes.
 
 - Flag → `event` attribute (request names differ from the response's):
 
@@ -1080,9 +1093,10 @@ Commit: "Add event write commands".
 ## Phase 12 — `pcal rsvps`, `tokens`, `website-token`
 
 Gate 4: `rsvps delete` and `tokens revoke` take IDs only. Confirmations
-follow Phase 9 (No is exit 0 with `"deleted": false` or `"rotated": false`;
-cancel is "Canceled. Nothing was deleted." or "Canceled. The website token
-wasn't changed.", exit 130 or 143). After `tokens revoke` gets a 204, pcal
+follow Phase 9, including Esc on the accessible line (Phase 9 review): No
+is exit 0 with `"deleted": false` or `"rotated": false`; cancel is
+"Canceled. Nothing was deleted." or "Canceled. The website token wasn't
+changed.", exit 130 or 143. After `tokens revoke` gets a 204, pcal
 calls GET /my/identity. A 401 means it revoked the token it was using: a
 stored token is forgotten too ("That was the token pcal was using, so
 you're logged out here as well."), and for `PCAL_TOKEN` pcal says so and
