@@ -284,6 +284,40 @@ Tags):
   unchanged. Every later confirmation (event delete, RSVP delete, token
   revoke, website-token rotate) uses that same prompt.
 
+**Reviewed 2026-11-02 (Gate 4b), fixed 2026-11-02 (Gate 4c).** An
+independent review of the Phase 9–13 code from a cleared context found 5
+issues, G4b-F1–F5 (1 Medium, 1 Low, 3 Nit; nothing Critical or High), and
+Gate 4c fixed them, test first, in three commits. Jeremy's decisions on
+the choices the review left open:
+- F1: always escape C0, DEL, and C1 in every CSV cell, whether or not
+  stdout is a terminal. Keep the formula prefix, decided from the original
+  cell, before those escapes (Phase 2).
+- F2: document the 365-occurrence cap in the README and SKILL.md (an old
+  series needs its UUID), and change the not-found hint so it no longer
+  claims `pcal events list --search` will show an id the list can't
+  return. The hint doesn't include the argument, so a token-like title
+  stays out of the error (Phase 10).
+- F3 and F4: add both tests. Midnight renders `12:00am`. A description of
+  exactly 1 MiB is allowed and sent. No product change; the comparisons
+  were already `hour == 0` and `len(data) > maxDescriptionBytes`.
+- F5: the skill says the error envelope goes to stdout with `--json`, and
+  a human terminal or `--csv` writes the error to stderr. Exits 130 and
+  143 stay one line on stderr and no envelope. `--jq`, `--quiet`, and a
+  non-TTY stdout also use the envelope; the skill already tells an agent
+  to pass `--json`.
+The other findings took the review's proposed fix. Gate 4's commits are
+not rewritten.
+
+Corrections to Gate 4's commit messages:
+1. 3153727 says 8 negative controls. `TestServerAcceptsRejectsWhatTheServerRejects`
+   lists 13 rules (`internal/parse/parse_test.go`, the slice at the lines
+   that were 389–393 at `ad9cd92`). All 13 are rejected. The eight that
+   sentence names are among them.
+2. b4450c4 says a bad RSVP date "sends nothing." No `/rsvps` request is
+   sent. `GET /my/identity` can already have run: `calendarLocation` runs
+   before `occurrenceDay` (`rsvps.go`). The plan requires the date parse
+   before the RSVP GET.
+
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
 `mise exec -- make check` green before its one commit. Commit messages carry

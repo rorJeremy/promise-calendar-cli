@@ -204,6 +204,23 @@ func TestEventsCreateDescriptionFile(t *testing.T) {
 	require.Equal(t, 2, countMethod(cal, "POST", "/events"))
 }
 
+// Exactly 1 MiB is allowed. The check is len(data) > maxDescriptionBytes,
+// so a >= mutant would reject this file before any POST.
+func TestEventsCreateDescriptionOfExactlyOneMiB(t *testing.T) {
+	cal := newFakeCalendar(t)
+	installEventWrites(t, cal)
+	h := eventsHarness(t, cal)
+	cacheZone(t, h, "America/Chicago")
+	body := strings.Repeat("a", maxDescriptionBytes)
+	h.stdin = strings.NewReader(body)
+
+	r := h.run("events", "create", "--title", "Prayer", "--date", "2026-10-31", "--description-file", "-")
+
+	require.Equal(t, 0, r.code, r.stdout)
+	require.Equal(t, body, eventAttrs(t, bodyOf(t, cal, "POST", "/events"))["description"])
+	require.Equal(t, 1, countMethod(cal, "POST", "/events"))
+}
+
 func TestEventsCreateImage(t *testing.T) {
 	cal := newFakeCalendar(t)
 	installEventWrites(t, cal)

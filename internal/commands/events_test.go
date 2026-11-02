@@ -771,6 +771,27 @@ func TestReadmeAndSkillDocumentTheOccurrenceCap(t *testing.T) {
 	require.Contains(t, skill, "old daily series needs the UUID")
 }
 
+// Midnight is 12, not 0. 2026-01-15 is standard time in Chicago, so
+// 00:00 there is 12:00am. Removing the hour == 0 branch would print 0:00am.
+func TestFormatClockMidnightIsTwelve(t *testing.T) {
+	loc, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "midnight", raw: "2026-01-15T00:00:00-06:00", want: "12:00am"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := formatClock(&tt.raw, loc)
+			require.True(t, ok)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestDedupeEventsKeepsTheEarliestDate(t *testing.T) {
 	refs := dedupeEvents([]client.Occurrence{
 		{Event: client.Event{ID: "a", Title: "A"}, OccurrenceDate: "2099-12-01"},

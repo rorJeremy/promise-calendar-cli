@@ -41,7 +41,7 @@ pcal talks to the Promise Church calendar. People see tables. Scripts see a JSON
 | 130 | Canceled with Esc or Ctrl-C |
 | 143 | Stopped by SIGTERM |
 
-A non-zero exit still has the error envelope on stdout, except 130 and 143, which print one line on stderr and no envelope.
+With `--json`, the error envelope goes to stdout. A human terminal or `--csv` writes the error to stderr. Exits 130 and 143 print one line on stderr and no envelope.
 
 ## Commands
 

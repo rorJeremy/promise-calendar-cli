@@ -7,7 +7,19 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/rorJeremy/promise-calendar-cli/skills"
 )
+
+// The skill is embedded, so this pins the sentence an agent reads.
+// With --json the error envelope goes to stdout. A human terminal or
+// --csv writes the error to stderr (Gate 4c, G4b-F5).
+func TestSkillSaysWhereTheErrorGoes(t *testing.T) {
+	text := string(skills.Skill)
+	require.Contains(t, text, "With `--json`, the error envelope goes to stdout. A human terminal or `--csv` writes the error to stderr.")
+	require.Contains(t, text, "Exits 130 and 143 print one line on stderr and no envelope.")
+	require.NotContains(t, text, "A non-zero exit still has the error envelope on stdout, except 130 and 143")
+}
 
 func TestSkillInstall(t *testing.T) {
 	home := t.TempDir()

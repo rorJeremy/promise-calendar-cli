@@ -288,7 +288,11 @@ dot), because it's also the credential key.
   left out when empty. Every usage error has a hint, at least "Run
   `<command> --help` for usage.", and an unknown command suggests close
   command names there (Jeremy's decisions at Gate 2b). A list that found
-  nothing is `"data": []`, never `null`.
+  nothing is `"data": []`, never `null`. With `--json`, the error envelope
+  goes to stdout. A human terminal or `--csv` writes the error to stderr.
+  Exits 130 and 143 print one line on stderr and no envelope (Gate 4c,
+  G4b-F5). `--jq`, `--quiet`, and stdout that isn't a terminal also use
+  the envelope; the skill tells an agent to pass `--json`.
 - `--jq EXPR` — built-in gojq over the envelope; implies `--json`.
 - `--quiet` — bare `data`, no envelope.
 - `--csv` — lists only. A cell a spreadsheet would run as a formula (starting
