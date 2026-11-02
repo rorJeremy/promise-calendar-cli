@@ -308,6 +308,11 @@ the choices the review left open:
 The other findings took the review's proposed fix. Gate 4's commits are
 not rewritten.
 
+**Gate 5 (2026-11-02), Phase 14.** The release pipeline is in, in one
+commit, using the YAML in Phase 14 as written. `release.yml` runs only
+on `v*` tags. The live production smoke test and the `v0.1.0` tag are
+still Jeremy's, and there is still no LICENSE file.
+
 Corrections to Gate 4's commit messages:
 1. 3153727 says 8 negative controls. `TestServerAcceptsRejectsWhatTheServerRejects`
    lists 13 rules (`internal/parse/parse_test.go`, the slice at the lines
@@ -1340,6 +1345,32 @@ delete → `pcal login --read-only` and a write attempt → exit 4 → `pcal log
 paste. Then tag `v0.1.0`.
 
 Commit: "Add release pipeline".
+
+**Done at Gate 5 (2026-11-02).** `.goreleaser.yaml` is the YAML above,
+unchanged. goreleaser 2.19.0's `check` exits 2 on the old `install:`
+Ruby form ("configuration is valid, but uses deprecated properties")
+and exits 0 on this file, with no deprecation warning.
+`completions/` and `dist/` were already in `.gitignore`. The `go mod
+tidy` before hook leaves `go.mod` and `go.sum` unchanged, and the go
+directive stays `1.26.0`. No LICENSE file (still a manual follow-up).
+The README already has the Homebrew, mise, and `go install` lines, so
+this commit does not add them.
+
+`release.yml` follows the paragraph above, with these details that
+paragraph doesn't spell out. They are the same choices `test.yml`
+already makes:
+- `runs-on: ubuntu-latest`. goreleaser cross-compiles the six targets,
+  so the release job is one Linux runner.
+- `permissions: {}` on the workflow, and `contents: write` only on the
+  release job.
+- checkout is the same pinned SHA as `test.yml` (`actions/checkout`
+  v7.0.1), with `fetch-depth: 0` and `persist-credentials: false`.
+- `jdx/mise-action` is the same pinned SHA as `test.yml` (v5.2.4).
+- `MISE_LOCKED=1` and `PCAL_NO_KEYRING=1`.
+- `make check`, then `mise exec -- goreleaser release --clean`, with
+  `GITHUB_TOKEN` and `HOMEBREW_TAP_TOKEN`.
+
+The live smoke test above, and `git tag v0.1.0`, stay manual.
 
 ## Manual follow-ups (Jeremy)
 

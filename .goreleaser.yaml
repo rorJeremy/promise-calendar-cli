@@ -1,0 +1,38 @@
+version: 2
+project_name: pcal
+before:
+  hooks:
+    - go mod tidy
+    - sh -c 'mkdir -p completions && for s in bash zsh fish; do go run ./cmd/pcal completion $s > completions/pcal.$s; done'
+builds:
+  - main: ./cmd/pcal
+    binary: pcal
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Version={{.Version}}
+      - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Commit={{.Commit}}
+      - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Date={{.Date}}
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides: [{ goos: windows, formats: [zip] }]
+    files: [README*, completions/*]
+checksum: { name_template: checksums.txt, algorithm: sha256 }
+homebrew_casks:
+  - name: pcal
+    repository: { owner: rorJeremy, name: homebrew-tap, token: "{{ .Env.HOMEBREW_TAP_TOKEN }}" }
+    directory: Casks
+    homepage: https://github.com/rorJeremy/promise-calendar-cli
+    description: "Command-line interface for the Promise Church Calendar"
+    binaries: [pcal]
+    completions: { bash: completions/pcal.bash, zsh: completions/pcal.zsh, fish: completions/pcal.fish }
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pcal"]
+          end

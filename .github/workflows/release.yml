@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # Never touch a runner's keychain. make check's tests pass their own
+      # environment; this also covers the goreleaser build, as test.yml
+      # covers CI. macOS runners have a keychain.
+      PCAL_NO_KEYRING: "1"
+      # Install only the URLs and checksums recorded in mise.lock.
+      MISE_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Installs go, golangci-lint, and goreleaser from mise.toml and
+      # mise.lock (mise install --locked), caches them, and puts them on PATH.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+
+      - run: make check
+
+      - run: mise exec -- goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

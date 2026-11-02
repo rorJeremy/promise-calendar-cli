@@ -13,7 +13,10 @@
   decisions (2026-11-02) on confirmations, tag names, and the later event,
   file, and token rules are in Commands, Input conveniences, Output, the
   exit codes, and the plan's header. Phase 9 implements the tags commands
-  and the confirmation rules; the rest wait for the later phases.
+  and the confirmation rules; the rest wait for the later phases. Gate 5
+  (2026-11-02) added the release pipeline described under Release
+  (`.goreleaser.yaml` and `release.yml`). No license file yet. The v0.1.0
+  tag is still Jeremy's.
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -357,4 +360,6 @@ exit code.
   `mise use -g github:rorJeremy/promise-calendar-cli` (from the release
   archives, no extra packaging), or
   `go install github.com/rorJeremy/promise-calendar-cli/cmd/pcal@latest`.
-- v0.1.0 once `pcal login` works against production.
+- v0.1.0 once `pcal login` works against production. Gate 5
+  (2026-11-02) added the two files. Nothing is signed. The tag itself,
+  the production smoke test, and the LICENSE decision are still Jeremy's.
