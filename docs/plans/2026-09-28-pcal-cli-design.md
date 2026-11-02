@@ -129,7 +129,12 @@ pcal version | completion {bash,zsh,fish} | skill install
   matches anywhere in a title, so the CLI does this matching itself. Multiple
   matches → exit 8 listing candidates.
 - `events list` shows occurrences: a recurring event appears once per
-  occurrence, dated by the server's `occurrence_*` fields.
+  occurrence, dated by the server's `occurrence_*` fields. Human dates and
+  times use the calendar's time zone: "Sun Nov 1" (with the year when it
+  isn't this year), "6:00pm–7:30pm", and "all day" when there are no times.
+  JSON, `--quiet`, and `--jq` keep the server's values (Jeremy's Gate 4
+  decision). A blank `--tag` on `list` is a usage error: the list has no
+  untagged filter, and on update that same flag clears the tags.
 - `publish`, `website on`, `rsvp on`, etc. are `PATCH /events/:id` with one field.
 
 ## Auth

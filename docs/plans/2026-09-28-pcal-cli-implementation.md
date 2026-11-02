@@ -1001,6 +1001,17 @@ values. Title resolution below is what the events commands use where Gate
   occurrences in it, and neither `list` nor title resolution sees it. That's
   a known server limitation; the README says to use the UUID.
 
+**Addition (Gate 4).** A `--tag` that was given but is only blanks
+(`--tag ''`) is a usage error on `list` ("need a tag name"), before any
+list or tag request. That flag state means "no tags" on update, where
+Phase 11 clears them. The list endpoint has no untagged filter
+(`filtered_events` applies `tag_ids` only when some id is present, app
+39c79cd), so treating a blank as "don't filter" would show every event.
+An absolute `--to` before `--from` (`YYYY-MM-DD`) is rejected before any
+request, including `/my/identity`. A relative date (`today`, a weekday)
+is checked once the calendar's zone is known, and still before `GET
+/events`.
+
 Commit: "Add events list and show".
 
 ## Phase 11 — `pcal events create | update | delete | toggles | image`

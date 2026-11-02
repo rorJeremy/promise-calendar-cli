@@ -217,6 +217,15 @@ func (a *app) interruptible(ctx context.Context) (context.Context, context.Cance
 	}
 }
 
+// now is the current time: a test's clock, or time.Now. "Today" for event
+// dates is this instant in the calendar's time zone.
+func (a *app) now() time.Time {
+	if a.clock != nil {
+		return a.clock()
+	}
+	return time.Now()
+}
+
 // prompter returns a Prompter that reads stdin and draws on stderr. Its
 // prompts are plain when pcal's output is unstyled (NO_COLOR, CLICOLOR=0,
 // TERM=dumb; see colorDisabled), as the design's Output section says

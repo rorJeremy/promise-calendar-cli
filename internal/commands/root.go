@@ -88,6 +88,9 @@ type app struct {
 	// window size, which a terminal would, so a drawn prompt draws into a
 	// buffer.
 	promptOptions []tea.ProgramOption
+	// clock, when set, is the current time. Tests pin "today"; production
+	// uses time.Now.
+	clock func() time.Time
 }
 
 // Execute runs pcal with the process's arguments and standard streams and
@@ -369,6 +372,7 @@ func newRootCmd(a *app) *cobra.Command {
 		newLogoutCmd(a, "logout"),
 		newWhoamiCmd(a),
 		newTagsCmd(a),
+		newEventsCmd(a),
 	)
 	return root
 }

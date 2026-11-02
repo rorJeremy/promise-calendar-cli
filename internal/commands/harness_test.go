@@ -374,6 +374,8 @@ type harness struct {
 	// revokeWait bounds revoking a token after a login (10 seconds unless
 	// set).
 	revokeWait time.Duration
+	// clock, when set, is the current time. Tests pin "today".
+	clock func() time.Time
 	// onStderrLine, when set, sees each line pcal prints on stderr as it's
 	// printed.
 	onStderrLine func(string)
@@ -411,6 +413,7 @@ func (h *harness) run(args ...string) result {
 		loginWait:     h.loginWait,
 		revokeWait:    h.revokeWait,
 		promptOptions: h.promptOptions,
+		clock:         h.clock,
 	}
 	code := execute(a, newRootCmd(a), args)
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
