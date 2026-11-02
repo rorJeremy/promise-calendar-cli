@@ -59,8 +59,9 @@ internal/
   output/     envelope, table/JSON/CSV renderers, --jq, exit codes
   prompt/     huh forms for missing fields (TTY only)
   parse/      natural dates/times, --repeat → RRULE
-  version/    version/commit/date via ldflags
-skills/pcal/SKILL.md      embedded Claude Code skill
+  version/    version/commit/date via ldflags; a go install build
+              falls back to the module version in the build info
+skills/pcal/SKILL.md      embedded Claude Code skill (`pcal skill install`)
 .goreleaser.yaml
 .github/workflows/test.yml, release.yml
 Makefile
@@ -98,7 +99,7 @@ pcal rsvps delete EVENT RSVP_ID [--yes]
 pcal tokens list | revoke ID [--yes]
 pcal website-token show | rotate [--yes]
 
-pcal version | completion {bash,zsh,fish} | skill install
+pcal version | completion bash|zsh|fish | skill install
 ```
 
 ### Input conveniences
@@ -131,6 +132,14 @@ pcal version | completion {bash,zsh,fish} | skill install
   token pcal is using forgets a stored token, or says to unset `PCAL_TOKEN`;
   any other failure of that check is ignored. `website-token rotate` prints
   the new token once and warns that the church website must be updated.
+- `version` prints the version, commit, date, and Go version. ldflags win.
+  When the version is still `dev`, the module version from the build info
+  is shown, with one leading `v` removed. The User-Agent uses that same
+  version. `completion` takes exactly bash, zsh, or fish and prints the
+  script itself, not an envelope. `skill install` writes
+  `~/.claude/skills/pcal/SKILL.md` and asks before replacing it. That
+  question follows the confirmation rule; answering No leaves the file
+  and reports `{"installed": false}`.
 - `events update` sends only the flags given; a flag with an empty value
   (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field. Moving an
   all-day event's dates sends no times. `--all-day` sends both times as

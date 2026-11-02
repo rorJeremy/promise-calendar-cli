@@ -376,6 +376,13 @@ func newRootCmd(a *app) *cobra.Command {
 		newRSVPsCmd(a),
 		newTokensCmd(a),
 		newWebsiteTokenCmd(a),
+		newVersionCmd(a),
+		newCompletionCmd(a),
+		newSkillCmd(a),
 	)
+	// cobra would also add a completion command, including powershell, and
+	// `pcal completion` with no shell would print help and exit 0. This one
+	// is pcal's.
+	root.CompletionOptions.DisableDefaultCmd = true
 	return root
 }

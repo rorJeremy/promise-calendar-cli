@@ -1195,6 +1195,18 @@ Commit: "Add RSVP, token, and website-token commands".
 - `README.md`: install (Homebrew, `mise use -g github:rorJeremy/promise-calendar-cli`,
   `go install`), login, 10 common recipes, output modes, exit codes.
 
+**Addition (Gate 4).** `version` prints JSON when stdout is not a terminal
+(`version`, `commit`, `date`, `go`) and a card in a terminal. The summary
+is `pcal <version>`. The User-Agent uses the same version a person sees,
+so a `go install` build does not send `pcal/dev`. cobra already adds
+`completion` with bash, zsh, fish, and powershell, and `pcal completion`
+with no shell prints help and exits 0. pcal's command takes exactly
+bash, zsh, or fish and exits 1 otherwise, and the script is written as
+itself, not as an envelope, so a redirect can be sourced. `skill install`
+writes `~/.claude/skills/pcal/SKILL.md` and, when that file exists, asks
+with the Phase 9 confirmation (No by default, Esc cancels: "Canceled.
+The skill wasn't changed."). Answering No is `{"installed": false}`.
+
 Commit: "Add version, completion, skill, README".
 
 ## Phase 14 — Release pipeline + v0.1.0

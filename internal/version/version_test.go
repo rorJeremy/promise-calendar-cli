@@ -35,3 +35,35 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, "none", Commit)
 	require.Equal(t, "unknown", Date)
 }
+
+func TestShown(t *testing.T) {
+	original, module := Version, ModuleVersion
+	t.Cleanup(func() {
+		Version, ModuleVersion = original, module
+	})
+
+	Version = "1.2.3"
+	ModuleVersion = "v9.9.9"
+	require.Equal(t, "1.2.3", Shown())
+
+	Version = "dev"
+	for _, module := range []string{"", "(devel)", "  (devel)  "} {
+		ModuleVersion = module
+		require.Equal(t, "dev", Shown(), module)
+	}
+	ModuleVersion = "v0.1.0"
+	require.Equal(t, "0.1.0", Shown())
+	ModuleVersion = "v0.0.0-20261102000000-abcdef"
+	require.Equal(t, "0.0.0-20261102000000-abcdef", Shown())
+}
+
+func TestUserAgentUsesTheModuleVersion(t *testing.T) {
+	original, module := Version, ModuleVersion
+	t.Cleanup(func() {
+		Version, ModuleVersion = original, module
+	})
+	Version = "dev"
+	ModuleVersion = "v0.1.0"
+
+	require.Contains(t, UserAgent(), "pcal/0.1.0")
+}
