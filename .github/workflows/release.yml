@@ -27,8 +27,12 @@ jobs:
           persist-credentials: false
 
       # Installs go, golangci-lint, and goreleaser from mise.toml and
-      # mise.lock (mise install --locked), caches them, and puts them on PATH.
+      # mise.lock (mise install --locked) and puts them on PATH. cache is
+      # off: this job publishes the release, and it does not need the
+      # Actions cache that test.yml uses.
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          cache: false
 
       - run: make check
 

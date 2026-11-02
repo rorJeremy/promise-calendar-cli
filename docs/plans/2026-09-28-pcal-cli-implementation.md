@@ -1299,6 +1299,7 @@ homebrew_casks:
     description: "Command-line interface for the Promise Church Calendar"
     binaries: [pcal]
     completions: { bash: completions/pcal.bash, zsh: completions/pcal.zsh, fish: completions/pcal.fish }
+    skip_upload: auto
     hooks:
       post:
         install_steps: |
@@ -1325,7 +1326,18 @@ homebrew_casks:
   → `jdx/mise-action` → `make check` → `goreleaser release --clean` (the
   mise-pinned goreleaser, instead of `goreleaser/goreleaser-action`), with env
   `GITHUB_TOKEN` + `HOMEBREW_TAP_TOKEN`, and `MISE_LOCKED=1` as in
-  `test.yml`. Permissions: `contents: write`.
+  `test.yml`. Permissions: `contents: write`. The release job sets
+  mise-action `cache: false` (Gate 5c, G5b-F3). `test.yml` keeps the
+  default, which is on. At mise-action `6be3c7ed`, `cache` defaults to
+  `"true"` (`action.yml`) and `src/index.ts` restores the cache only when
+  that input is true.
+- **Prerelease cask (Gate 5c).** `skip_upload: auto` on the cask, so a
+  prerelease tag does not update the Homebrew cask. `v0.1.0` is not a
+  prerelease, so that tag still publishes it. goreleaser skips the
+  upload when `SkipUpload` is `auto` and the semver prerelease is not
+  empty (`internal/pipe/cask/cask.go`). basecamp-cli `8655e70` sets the
+  same key. Snapshot mode does not publish, so this is not something a
+  local snapshot can show.
 - Local checks: `mise exec -- goreleaser check` (exit 0, with no deprecation
   warnings), `mise exec -- goreleaser release --snapshot --clean`, and run
   `dist/pcal_darwin_amd64_v1/pcal version` (this Mac is x64; on arm64 it's
@@ -1397,6 +1409,8 @@ already makes:
 - checkout is the same pinned SHA as `test.yml` (`actions/checkout`
   v7.0.1), with `fetch-depth: 0` and `persist-credentials: false`.
 - `jdx/mise-action` is the same pinned SHA as `test.yml` (v5.2.4).
+  The release job sets `cache: false` (Gate 5c, G5b-F3). `test.yml`
+  does not, so its cache stays on.
 - `MISE_LOCKED=1` and `PCAL_NO_KEYRING=1`.
 - `make check`, then `mise exec -- goreleaser release --clean`, with
   `GITHUB_TOKEN` and `HOMEBREW_TAP_TOKEN`.

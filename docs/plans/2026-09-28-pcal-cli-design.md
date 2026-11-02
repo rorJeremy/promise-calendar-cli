@@ -358,8 +358,11 @@ exit code.
   host binary's version, commit, or date is still the default, which on
   the Linux release runner is the linux/amd64 binary (Gate 5c, G5b-F2),
   and a Homebrew cask pushed to `rorJeremy/homebrew-tap`
-  (needs a `HOMEBREW_TAP_TOKEN` secret). goreleaser v2 deprecated `brews`
-  formulas in favor of `homebrew_casks`; the install command is the same.
+  (needs a `HOMEBREW_TAP_TOKEN` secret). A prerelease tag does not
+  update that cask (`skip_upload: auto`; Gate 5c). The release job does
+  not restore the Actions cache (`cache: false`; Gate 5c, G5b-F3).
+  goreleaser v2 deprecated `brews` formulas in favor of
+  `homebrew_casks`; the install command is the same.
 - Install: `brew install rorJeremy/tap/pcal`,
   `mise use -g github:rorJeremy/promise-calendar-cli` (from the release
   archives, no extra packaging), or

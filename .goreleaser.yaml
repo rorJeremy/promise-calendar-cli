@@ -34,6 +34,7 @@ homebrew_casks:
     description: "Command-line interface for the Promise Church Calendar"
     binaries: [pcal]
     completions: { bash: completions/pcal.bash, zsh: completions/pcal.zsh, fish: completions/pcal.fish }
+    skip_upload: auto
     hooks:
       post:
         install_steps: |
