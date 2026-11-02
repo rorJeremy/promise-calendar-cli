@@ -9,7 +9,11 @@
   decisions on login and logout (Auth) and input parsing (Input
   conveniences), 2026-10-28. The Phase 6–8 code was reviewed (Gate 3b,
   2026-10-29) and its findings fixed (Gate 3c, 2026-10-30); those decisions
-  are in Auth, Output, the exit codes, and the plan's header.
+  are in Auth, Output, the exit codes, and the plan's header. Jeremy's Gate 4
+  decisions (2026-11-02) on confirmations, tag names, and the later event,
+  file, and token rules are in Commands, Input conveniences, Output, the
+  exit codes, and the plan's header. Phase 9 implements the tags commands
+  and the confirmation rules; the rest wait for the later phases.
 - **Server-side companion:** `promise-church-calendar` →
   `docs/plans/2026-09-28-cli-api-design.md` (Planning Center removal, JSON API,
   token auth). PR 2 (#112) is merged and deployed. The contract is the
@@ -85,7 +89,7 @@ pcal events rsvp on|off ID
 pcal events image set ID (FILE | --url URL) [--alt TEXT]   # an upload or a link; either replaces the other
 pcal events image rm ID
 
-pcal tags list | create NAME [--color] | update ID [...] | delete ID [--yes]
+pcal tags list [--csv] | create NAME [--color] | update ID|NAME [...] | delete ID|NAME [--yes]
 pcal rsvps list EVENT_ID [--date D] [--csv]
 pcal rsvps add EVENT_ID --name N --email E [--phone --date]
 pcal rsvps delete EVENT_ID RSVP_ID [--yes]
@@ -114,7 +118,9 @@ pcal version | completion {bash,zsh,fish} | skill install
 - `--tag` takes names and resolves them to IDs via `GET /tags`; unknown name → exit 1.
   Tag names are unique only case-sensitively on the server, so an exact-case
   match wins, then a unique case-insensitive one; two that differ only by case
-  → exit 8.
+  → exit 8. `tags update` and `tags delete` take an ID or a name matched the
+  same way, except that no match is exit 2 with a hint to run `pcal tags list`
+  (Jeremy's Gate 4 decision). `rsvps delete` and `tokens revoke` take IDs only.
 - `events update` sends only the flags given; a flag with an empty value
   (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field.
 - Event `ID` arguments accept a UUID, an exact title, or a unique title
@@ -216,7 +222,10 @@ dot), because it's also the credential key.
   and reverse (Gate 3), and none of those either when styling is off, so
   an accessible prompt then prints no escape sequence (Gate 3c). With
   `TERM=dumb` prompts are accessible (plain lines), as huh's own fallback
-  makes them (Gate 3c).
+  makes them (Gate 3c). A plain Confirm asks on one line (`Delete tag
+  "Kids"? [y/N]`) rather than drawing two buttons, which look alike with no
+  attributes; a password prompt stays drawn, since its cursor still shows
+  (Jeremy's Gate 4 decision).
 - **`--json` or stdout not a TTY:**
   ```json
   {"ok": true, "data": [...], "summary": "12 events Oct 1–31"}
@@ -239,7 +248,15 @@ dot), because it's also the credential key.
 - `--csv` — lists only. A cell a spreadsheet would run as a formula (starting
   with `=`, `+`, `-`, or `@`) gets a leading `'`.
 - Deletes and `website-token rotate` confirm unless `--yes`. With no TTY and no
-  `--yes`, they fail with exit 1.
+  `--yes`, they fail with exit 1, before any request. The question opens on
+  No, so Enter (and Ctrl-D on an accessible prompt) changes nothing and
+  exits 0: "Nothing was deleted.", with `{"deleted": false}` (rotate:
+  `{"rotated": false}`). Esc, Ctrl-C, or SIGTERM cancels instead: one line
+  on stderr, "Canceled. Nothing was deleted." (rotate: "Canceled. The
+  website token wasn't changed."), exit 130 or 143, no envelope. That is
+  not exit 0, which is what basecamp-cli does for a canceled confirmation
+  (Jeremy's Gate 4 decision). The question names the tag, or the event's
+  title and date.
 
 ### Exit codes (fizzy-cli's numbers; 400 and 422 → 1)
 
@@ -260,8 +277,8 @@ exit code.
 | 6 | Network |
 | 7 | API / server error (5xx, unexpected) |
 | 8 | Ambiguous title match |
-| 130 | Canceled with Ctrl-C during a login (128 + SIGINT, as basecamp-cli; no envelope) |
-| 143 | Stopped by SIGTERM during a login (128 + SIGTERM, as basecamp-cli's `ExitTerminated`; no envelope; Gate 3c) |
+| 130 | Canceled with Ctrl-C or Esc during a login or a confirmation (128 + SIGINT; no envelope). A confirmation answered No is exit 0, not 130 (Gate 4) |
+| 143 | Stopped by SIGTERM during a login or a confirmation (128 + SIGTERM, as basecamp-cli's `ExitTerminated`; no envelope; Gate 3c, extended at Gate 4) |
 
 ## Testing
 

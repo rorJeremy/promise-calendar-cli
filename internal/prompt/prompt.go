@@ -84,11 +84,18 @@ func (p Prompter) Password(ctx context.Context, title string) (string, error) {
 }
 
 // Confirm asks a yes/no question under title; def is the answer Enter
-// gives.
+// gives. When the prompt is plain, it asks on one line ("title [y/N]")
+// instead of drawing two buttons: with no attributes, the chosen button
+// looks like the other one (Jeremy's Gate 4 decision). Password stays
+// drawn, because the cursor still shows where the answer goes.
 func (p Prompter) Confirm(ctx context.Context, title string, def bool) (bool, error) {
 	value := def
 	confirm := huh.NewConfirm().Title(title).Value(&value)
-	if err := p.run(ctx, huh.NewForm(huh.NewGroup(confirm))); err != nil {
+	asking := p
+	if p.Plain {
+		asking.Accessible = true
+	}
+	if err := asking.run(ctx, huh.NewForm(huh.NewGroup(confirm))); err != nil {
 		return def, err
 	}
 	return value, nil
@@ -159,8 +166,8 @@ func (p Prompter) run(ctx context.Context, form *huh.Form) error {
 // accessible prompt prints no escape sequence at all. A drawn one still
 // shows the cursor as a reverse cell, which bubbles draws whatever the
 // theme (bubbles v2.0.0 cursor/cursor.go:240). A drawn Confirm's two
-// buttons then look alike, so Phase 9 has to mark the chosen one some
-// other way before it uses Confirm.
+// buttons then look alike, so Confirm asks in accessible mode instead
+// when Plain is set (Jeremy's Gate 4 decision).
 func theme(plain bool) huh.Theme {
 	styled := !plain
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {

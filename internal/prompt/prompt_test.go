@@ -137,6 +137,11 @@ func TestAccessibleConfirm(t *testing.T) {
 		{"no", "n\n", true, false},
 		{"Enter takes the default (no)", "\n", false, false},
 		{"Enter takes the default (yes)", "\n", true, true},
+		// huh's accessible confirm treats end of input as the default
+		// (accessibility.go PromptString). Ctrl-D is that EOF, so a No
+		// default can't be accepted by it (basecamp-cli forms.go:98-112).
+		{"Ctrl-D takes the default (no)", "", false, false},
+		{"Ctrl-D takes the default (yes)", "", true, true},
 	}
 
 	for _, tt := range tests {
@@ -151,6 +156,21 @@ func TestAccessibleConfirm(t *testing.T) {
 			require.Contains(t, out.String(), "Delete it?")
 		})
 	}
+}
+
+// When the prompt theme has no attributes, a drawn Confirm's Yes and No
+// look the same, so Confirm asks on one plain line instead. Password stays
+// drawn: its cursor still shows where the answer goes (Gate 4).
+func TestPlainConfirmIsAccessible(t *testing.T) {
+	var out bytes.Buffer
+	p := Prompter{In: strings.NewReader("y\n"), Out: &out, Plain: true}
+
+	got, err := p.Confirm(testContext(t), `Delete tag "Kids"?`, false)
+
+	require.NoError(t, err)
+	require.True(t, got)
+	require.Contains(t, out.String(), `Delete tag "Kids"? [y/N]`)
+	require.NotContains(t, out.String(), "\x1b")
 }
 
 func TestConfirmCanceled(t *testing.T) {

@@ -313,10 +313,11 @@ func TestUnknownCommandSuggestions(t *testing.T) {
 		arg      string
 		wantHint string
 	}{
-		// pcal whoami is a real command; the others are added for the test.
+		// pcal whoami and pcal tags are real commands; the others are added
+		// for the test. "t" then matches the real tags command and tokens.
 		{"one close name", []string{"events"}, "whoamj", "Did you mean `pcal whoami`? Run `pcal --help` for usage."},
 		{"a prefix", []string{"events"}, "ev", "Did you mean `pcal events`? Run `pcal --help` for usage."},
-		{"two names it starts", []string{"tags", "tokens", "events"}, "t", "Did you mean `pcal tags` or `pcal tokens`? Run `pcal --help` for usage."},
+		{"two names it starts", []string{"tokens", "events"}, "t", "Did you mean `pcal tags` or `pcal tokens`? Run `pcal --help` for usage."},
 		{"nothing close", []string{"events"}, "frobnicate", "Run `pcal --help` for usage."},
 	}
 

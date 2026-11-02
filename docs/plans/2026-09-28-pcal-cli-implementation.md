@@ -230,6 +230,51 @@ Corrections to Gate 3's commit messages and docs (F13):
 Also fixed: `output_test.go`'s CSV doc comment had slid onto `TestVisible`,
 and a 99-character comment line in `root.go`.
 
+**Jeremy's Gate 4 decisions (2026-11-02)**, for Phases 9–13. Phase 9
+implements the first three; the others land with the later phases. Checked
+against basecamp-cli (8655e70) and fizzy-cli (65b13a2), and against the
+calendar app at 39c79cd (`tags_controller.rb`, `tag.rb`, `docs/api.md` →
+Tags):
+- When prompts are plain (`NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb`, unless
+  `CLICOLOR_FORCE`), Confirm asks on one line (`Delete tag "Kids"? [y/N]`)
+  instead of drawing two buttons, which look alike with no attributes.
+  Password stays drawn (Phase 9).
+- A delete or rotate confirmation opens on No. Enter is No. In an
+  accessible prompt, end of input (Ctrl-D) is the default too, which is why
+  it opens on No (basecamp-cli `internal/tui/forms.go:98–112`; huh v2.0.3
+  `accessibility.go` `PromptBool`). Answering No exits 0 and says nothing
+  changed: human "Nothing was deleted.", JSON `{"deleted": false}` (rotate:
+  `{"rotated": false}`). Esc, Ctrl-C, SIGINT, or
+  SIGTERM cancels: one line on stderr, "Canceled. Nothing was deleted."
+  (rotate: "Canceled. The website token wasn't changed."), exit 130 or 143,
+  no envelope. That error is the confirmation's, not `errLoginCanceled`.
+  basecamp-cli exits 0 when a confirmation is canceled
+  (`internal/commands/chat.go:1284`); pcal does not (Phase 9 for delete;
+  Phase 12 for rotate).
+- `tags update` and `tags delete` take an ID or a name, matched as `--tag`
+  matches names: exact case, then a unique case-insensitive match; names
+  that differ only by case → exit 8; no match → exit 2 with a hint to run
+  `pcal tags list`. The events commands use Phase 10's title resolution.
+  `rsvps delete` and `tokens revoke` take IDs only. A confirmation names
+  what it acts on (`Delete tag "Kids"?`; for an event, its title and date,
+  and when the whole series goes) (Phase 9 for tags).
+- Revoking pcal's own token (`tokens revoke`, Phase 12). The list doesn't
+  mark the token in use, so after a 204 pcal checks it with GET
+  /my/identity. A 401 means it just revoked its own token: a stored token
+  is forgotten too ("That was the token pcal was using, so you're logged
+  out here as well."), and for `PCAL_TOKEN` pcal says so and suggests
+  unsetting it. Any other failure of that check is ignored.
+- Event dates and times in human output (Phase 10) are shown in the
+  calendar's time zone (the cached `time_zone`, fetched from /my/identity
+  when missing): dates like "Sun Nov 1" (with the year when it isn't this
+  year), times like "6:00pm–8:00pm", and "all day" when there are none.
+  JSON, `--quiet`, and `--jq` keep the server's values.
+- Reading files (Phase 11). `--description-file` (`-` for stdin) reads at
+  most 1 MiB; more is a usage error, like `--with-token`'s 4096-byte limit.
+  `--image` checks the file's size before uploading: over 10 MB is a usage
+  error naming the limit. The file type is left to the server's 422.
+- Stop after Phase 9 for review, then do Phases 10–13.
+
 TDD throughout (`go test`, table-driven, `testify/require`): every phase
 starts with a failing test (the red step), then the code, then
 `mise exec -- make check` green before its one commit. Commit messages carry
@@ -855,23 +900,43 @@ Commit: "Add date, time, and recurrence parsing".
 ## Phase 9 — `pcal tags`
 
 This establishes the command/test pattern the rest copy.
-`list | create NAME [--color] | update ID [--name --color --position] | delete ID [--yes]`.
-Body `{"tag":{name,color,position}}`. `color` is optional and `#RRGGBB` when
-given; a duplicate name or a bad color is a 422. `GET /tags` is already
-ordered by position, then name; keep that order.
-Red: each against the fake server and golden JSON. 422 → exit 1 with fields.
-Delete without `--yes` and without a TTY → exit 1. Delete with a TTY → huh
-confirm (injectable). Left for this phase by Gate 3c: when pcal's output
-is unstyled, the prompt theme has no attributes, so a drawn `Confirm`'s Yes
-and No look alike; mark the chosen one some other way (or use accessible
-prompts there) before using it. And `errLoginCanceled` ("Login canceled.
-Nothing was stored.", exit 130) is the login's; a canceled confirmation
-needs its own error (basecamp-cli treats it as "no", exit 0:
-`internal/commands/skill.go:164–176`).
+`list [--csv] | create NAME [--color] | update ID|NAME [--name --color --position] | delete ID|NAME [--yes]`.
+Body `{"tag":{name,color,position}}`, and only the keys given. `color` is
+optional and `#RRGGBB` when given; the calendar checks it, so a duplicate
+name or a bad color is a 422 (exit 1, fields in body order). `GET /tags` is
+already ordered by position, then name; the list keeps that order. Columns
+are name, color, position, and id. The summary is "3 tags", "1 tag", or
+"0 tags". Create and update print the tag the calendar returned (a card for
+a person). An update with no flags sends `{"tag":{}}`.
+`update` and `delete` take an ID or a name (Gate 4): exact case, then a
+unique case-insensitive match; two that differ only by case → exit 8,
+listing them; no match → exit 2, "Run `pcal tags list`." A word that looks
+like a token isn't repeated.
+Delete asks `Delete tag "Kids"?` unless `--yes`, and only when stdin and
+stderr are both terminals; otherwise it exits 1 before any request. The
+question opens on No. Enter, and Ctrl-D on the plain line, delete nothing
+and exit 0: "Nothing was deleted.", `{"deleted": false}`. Yes deletes. The
+JSON for a delete that happened is the same object with `"deleted": true`
+(added at Gate 4, so either answer has one shape). Esc, Ctrl-C, or SIGTERM
+cancels: "Canceled. Nothing was deleted." on stderr, exit 130 or 143, no
+envelope. That error is `errTagDeleteCanceled` or `errTagDeleteTerminated`,
+not the login's, and not exit 0 as in basecamp-cli
+(`internal/commands/skill.go:164–176`, `chat.go:1284`). When prompts are
+plain, the question is huh's accessible line, not two drawn buttons
+(Gate 4). Password prompts stay drawn.
+Red: each against the fake server and golden JSON. 403 `read_only_token` →
+exit 4. 404 → exit 2.
 
 Commit: "Add tags commands".
 
 ## Phase 10 — `pcal events list | show`
+
+Gate 4: human dates and times use the calendar's time zone (cached
+`time_zone`, or GET /my/identity when it isn't cached). Dates like "Sun Nov
+1", with the year when it isn't this year; times like "6:00pm–8:00pm"; "all
+day" when there are none. JSON, `--quiet`, and `--jq` keep the server's
+values. Title resolution below is what the events commands use where Gate
+4 says "the events commands use Phase 10's title resolution."
 
 - `list`: `--from/--to` → `start`/`end` (`YYYY-MM-DD`, `end` inclusive;
   default today → +30, the server's default too). `--to` before `--from` →
@@ -927,6 +992,13 @@ Commit: "Add tags commands".
 Commit: "Add events list and show".
 
 ## Phase 11 — `pcal events create | update | delete | toggles | image`
+
+Gate 4: `--description-file` (`-` for stdin) reads at most 1 MiB; more is a
+usage error, like `--with-token`'s 4096-byte limit. `--image` checks the
+file's size before uploading; over 10 MB is a usage error that names the
+limit. The file type is left to the server's 422. Delete confirms as Phase
+9 does, and the question names the event's title and date, saying when the
+whole series goes.
 
 - Flag → `event` attribute (request names differ from the response's):
 
@@ -1006,6 +1078,15 @@ Commit: "Add events list and show".
 Commit: "Add event write commands".
 
 ## Phase 12 — `pcal rsvps`, `tokens`, `website-token`
+
+Gate 4: `rsvps delete` and `tokens revoke` take IDs only. Confirmations
+follow Phase 9 (No is exit 0 with `"deleted": false` or `"rotated": false`;
+cancel is "Canceled. Nothing was deleted." or "Canceled. The website token
+wasn't changed.", exit 130 or 143). After `tokens revoke` gets a 204, pcal
+calls GET /my/identity. A 401 means it revoked the token it was using: a
+stored token is forgotten too ("That was the token pcal was using, so
+you're logged out here as well."), and for `PCAL_TOKEN` pcal says so and
+suggests unsetting it. Any other failure of that check is ignored.
 
 - `rsvps list EVENT [--date D] [--csv]` → `GET /events/:id/rsvps`, newest
   first; `--date` → `?occurrence=YYYY-MM-DD` (the param is `occurrence`, not

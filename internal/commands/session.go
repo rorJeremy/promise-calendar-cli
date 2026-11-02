@@ -27,8 +27,9 @@ type credentialStore interface {
 
 // errLoginCanceled is how a login reports that the person canceled it with
 // Ctrl-C or Esc: execute prints the message alone, and pcal exits 130. Its
-// words are the login's; Phase 9's confirmation prompts need their own (a
-// canceled confirmation in basecamp-cli is "no", exit 0).
+// words are the login's. A canceled delete confirmation is
+// errTagDeleteCanceled ("Canceled. Nothing was deleted."), not this, and
+// not a "no" (basecamp-cli exits 0 for that; pcal does not).
 var errLoginCanceled = &output.Error{Code: output.CodeInterrupted, Message: "Login canceled. Nothing was stored."}
 
 // errLoginTerminated is errLoginCanceled for a SIGTERM: pcal exits 143

@@ -368,6 +368,7 @@ func newRootCmd(a *app) *cobra.Command {
 		newLoginCmd(a, "login"),
 		newLogoutCmd(a, "logout"),
 		newWhoamiCmd(a),
+		newTagsCmd(a),
 	)
 	return root
 }
