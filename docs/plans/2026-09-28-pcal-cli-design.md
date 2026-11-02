@@ -354,8 +354,10 @@ exit code.
 - Tag `v*` → `release.yml` runs goreleaser:
   darwin/linux/windows × amd64/arm64, `checksums.txt`, shell completions
   generated at build time (the hook fails the release if a completion
-  file is missing or empty; Gate 5c, G5b-F1), and a Homebrew cask pushed
-  to `rorJeremy/homebrew-tap`
+  file is missing or empty; Gate 5c, G5b-F1). The build fails if the
+  host binary's version, commit, or date is still the default, which on
+  the Linux release runner is the linux/amd64 binary (Gate 5c, G5b-F2),
+  and a Homebrew cask pushed to `rorJeremy/homebrew-tap`
   (needs a `HOMEBREW_TAP_TOKEN` secret). goreleaser v2 deprecated `brews`
   formulas in favor of `homebrew_casks`; the install command is the same.
 - Install: `brew install rorJeremy/tap/pcal`,

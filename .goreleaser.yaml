@@ -16,6 +16,10 @@ builds:
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Version={{.Version}}
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Commit={{.Commit}}
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Date={{.Date}}
+    hooks:
+      post:
+        - cmd: sh -c 'set -eu; if [ "{{ .Os }}" != "{{ .Runtime.Goos }}" ] || [ "{{ .Arch }}" != "{{ .Runtime.Goarch }}" ]; then exit 0; fi; bin="{{ .Path }}"; out=$("$bin" version --jq ".data.version, .data.commit, .data.date") || { echo "pcal version check failed; version --jq did not run" >&2; exit 1; }; nl=$(printf "\nX"); nl=${nl%X}; version=${out%%"$nl"*}; rest=${out#*"$nl"}; commit=${rest%%"$nl"*}; date=${rest#*"$nl"}; bad=; if [ "$version" = dev ]; then bad=version; else case "$version" in 0.0.0-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*) bad=version;; esac; fi; if [ "$commit" = none ]; then bad=${bad:+$bad,}commit; fi; if [ "$date" = unknown ]; then bad=${bad:+$bad,}date; fi; if [ -n "$bad" ]; then echo "pcal version check failed; {{ .Os }}/{{ .Arch }} still has an unstamped field ($bad). The defaults are dev (or the module pseudo-version that replaces it), none, and unknown." >&2; printf "%s\n" "$out" >&2; exit 1; fi; echo "pcal version check passed; {{ .Os }}/{{ .Arch }} is stamped" >&2'
+          output: true
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

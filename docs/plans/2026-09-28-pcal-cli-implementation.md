@@ -1281,6 +1281,10 @@ builds:
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Version={{.Version}}
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Commit={{.Commit}}
       - -X github.com/rorJeremy/promise-calendar-cli/internal/version.Date={{.Date}}
+    hooks:
+      post:
+        - cmd: sh -c 'set -eu; if [ "{{ .Os }}" != "{{ .Runtime.Goos }}" ] || [ "{{ .Arch }}" != "{{ .Runtime.Goarch }}" ]; then exit 0; fi; bin="{{ .Path }}"; out=$("$bin" version --jq ".data.version, .data.commit, .data.date") || { echo "pcal version check failed; version --jq did not run" >&2; exit 1; }; nl=$(printf "\nX"); nl=${nl%X}; version=${out%%"$nl"*}; rest=${out#*"$nl"}; commit=${rest%%"$nl"*}; date=${rest#*"$nl"}; bad=; if [ "$version" = dev ]; then bad=version; else case "$version" in 0.0.0-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*) bad=version;; esac; fi; if [ "$commit" = none ]; then bad=${bad:+$bad,}commit; fi; if [ "$date" = unknown ]; then bad=${bad:+$bad,}date; fi; if [ -n "$bad" ]; then echo "pcal version check failed; {{ .Os }}/{{ .Arch }} still has an unstamped field ($bad). The defaults are dev (or the module pseudo-version that replaces it), none, and unknown." >&2; printf "%s\n" "$out" >&2; exit 1; fi; echo "pcal version check passed; {{ .Os }}/{{ .Arch }} is stamped" >&2'
+          output: true
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -1341,11 +1345,24 @@ homebrew_casks:
   the hook prints `pcal completion failed; completions/pcal.<shell> is
   missing or empty` and exits non-zero. Goreleaser then stops, instead
   of publishing a cask that names files the archive does not have.
-- **Red step:** none for the original pipeline. Gate 5c's red check for
-  this hook is a scratch snapshot whose completion files are empty: the
-  old hook exits 0, and this one exits 1. The rest of the phase is still
-  checked by `goreleaser check`, the snapshot, and the live smoke test
-  below.
+- **Stamped version fails closed (Gate 5c, G5b-F2).** A builds post hook
+  runs `version --jq` on the one binary whose OS and arch are the host's.
+  The release job is `ubuntu-latest`, so that binary is linux/amd64. The
+  six targets share one ldflags list, and the hook does not execute a
+  darwin or windows binary. It fails the release when version is still
+  `dev`, or the module pseudo-version `Shown` substitutes for `dev`
+  (`0.0.0-` plus a 14-digit timestamp), or commit is `none`, or date is
+  `unknown`. It is a goreleaser hook, not a `release.yml` step, because
+  that also fails `goreleaser release --snapshot` locally, and it runs
+  before publish. `pcal version` prints `Shown`, which is why a missed
+  Version ldflag inside a git checkout is a pseudo-version rather than
+  the word `dev`.
+- **Red step:** none for the original pipeline. Gate 5c's red checks are
+  scratch snapshots: an empty completion file exits 1 (the old hook
+  exited 0), and a wrong `-X` path exits 1 (the old config's
+  `goreleaser check` and `go build` exited 0). The rest of the phase is
+  still checked by `goreleaser check`, the snapshot, and the live smoke
+  test below.
 
 Live smoke test against production (PR 2 is deployed, so this is unblocked): `pcal login` →
 `whoami` → `events list` → create a draft test event → update → image set/rm →
@@ -1358,7 +1375,8 @@ Commit: "Add release pipeline".
 **Done at Gate 5 (2026-11-02).** At `eb6e0ba`, `.goreleaser.yaml` matched
 the Phase 14 YAML as written then. Gate 5c (G5b-F1) changes the
 completion hook, in the file and in the fence above: `set -eu` and
-`test -s` on each generated file.
+`test -s` on each generated file. G5b-F2 adds the version post hook
+to that same fence.
 
 goreleaser 2.19.0's `check` exits 2 on the old `install:`
 Ruby form ("configuration is valid, but uses deprecated properties")
