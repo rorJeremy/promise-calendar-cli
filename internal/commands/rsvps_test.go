@@ -297,6 +297,45 @@ func TestRSVPsListCSVAndCounts(t *testing.T) {
 	require.NotContains(t, human.stdout, "\x1b")
 }
 
+// rsvps list --csv must not write the raw ESC or BEL from a public name,
+// on a pipe or on a terminal. The spreadsheet prefix stays.
+func TestRSVPsListCSVEscapesControlsOnAPipeAndATerminal(t *testing.T) {
+	body := `[{"id":"r3","name":"\u001b]0;pwned\u0007","email":"a@b.c","phone":"+15551212","occurrence_date":null,"created_at":"2099-09-03T09:00:00.000-05:00"},{"id":"r4","name":"=HYPERLINK(\"http://example.com\")","email":"b@b.c","phone":null,"occurrence_date":null,"created_at":"2099-09-03T09:00:00.000-05:00"}]`
+	tests := []struct {
+		name string
+		tty  bool
+	}{
+		{name: "a pipe", tty: false},
+		{name: "a terminal", tty: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cal := newFakeCalendar(t)
+			installRSVPs(t, cal)
+			cal.route("GET /events/"+worshipNightID+"/rsvps", cal.withToken([]string{goodToken}, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			h := eventsHarness(t, cal)
+			pinChicago(h, 2026, time.November, 2)
+			cacheZone(t, h, "America/Chicago")
+			h.outTTY = tt.tty
+			if tt.tty {
+				h.env["NO_COLOR"] = "1"
+			}
+
+			r := h.run("rsvps", "list", worshipNightID, "--csv")
+
+			require.Equal(t, 0, r.code, r.stdout)
+			require.NotContains(t, r.stdout, "\x1b")
+			require.NotContains(t, r.stdout, "\x07")
+			require.Contains(t, r.stdout, `\x1b]0;pwned\a`)
+			require.Contains(t, r.stdout, `'+15551212`)
+			require.Contains(t, r.stdout, `"'=HYPERLINK`)
+		})
+	}
+}
+
 func TestRSVPsListResolvesATitleInsideTheWindow(t *testing.T) {
 	cal := newFakeCalendar(t)
 	installRSVPs(t, cal)

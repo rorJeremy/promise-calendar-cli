@@ -286,7 +286,11 @@ dot), because it's also the credential key.
 - `--jq EXPR` — built-in gojq over the envelope; implies `--json`.
 - `--quiet` — bare `data`, no envelope.
 - `--csv` — lists only. A cell a spreadsheet would run as a formula (starting
-  with `=`, `+`, `-`, or `@`) gets a leading `'`.
+  with `=`, `+`, `-`, `@`, a tab, or a carriage return) gets a leading `'`.
+  Every C0, DEL, and C1 control in a cell is then shown as a Go escape, the
+  same way human output does, whether or not stdout is a terminal, so a
+  public RSVP name can't retitle a staff member's terminal (Jeremy's Gate 4c
+  decision, G4b-F1). `--jq` still prints a raw string (accepted at Gate 2c).
 - Deletes and `website-token rotate` confirm unless `--yes`. With no TTY and no
   `--yes`, they fail with exit 1, before any request. The question opens on
   No, so Enter (and Ctrl-D on an accessible prompt) changes nothing and

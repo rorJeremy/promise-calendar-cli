@@ -440,7 +440,9 @@ Commit: "Scaffold pcal".
   member's terminal (F5).
 - `--csv` cells starting with `=`, `+`, `-`, `@`, a tab, or a carriage
   return get a leading `'`, so a spreadsheet won't run them as formulas
-  (F15).
+  (F15). Every C0, DEL, and C1 control in a cell is then shown as a Go
+  escape, on a pipe and on a terminal (Gate 4c, G4b-F1). The prefix is
+  chosen from the original cell, before those escapes.
 - `Print` turns a nil slice into `[]`, so an empty list is never `null`
   (F20).
 - Every usage error without its own hint gets "Run `<command> --help` for

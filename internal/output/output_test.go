@@ -548,7 +548,8 @@ func TestVisible(t *testing.T) {
 
 // A spreadsheet runs a cell starting with =, +, -, or @ (or a tab or CR
 // before one) as a formula, and RSVP names come from the public. A leading
-// ' makes the cell text.
+// ' makes the cell text. The tab and CR are then shown as \t and \r, so
+// the prefix is still there and the control bytes are not.
 func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
 	p, out, _ := newTestPrinter(t, Options{CSV: true})
 
@@ -565,8 +566,51 @@ func TestPrintCSVGuardsAgainstFormulas(t *testing.T) {
 	require.Equal(t, "Name,Phone\n"+
 		`"'=HYPERLINK(""http://example.com"")",'+1 555 0100`+"\n"+
 		"'@SUM(A1),'-2\n"+
-		"'\tTab,\"'\rReturn\"\n"+
+		"'\\tTab,'\\rReturn\n"+
 		"Plain,555 0100\n", out.String())
+}
+
+// --csv is CSV on a terminal too (selectFormat returns it before the TTY
+// check). A public RSVP name can carry ESC and BEL, so every cell shows
+// C0, DEL, and C1 as Go escapes, the same way human output does, whether
+// or not stdout is a terminal. The formula prefix stays (Gate 4c, G4b-F1).
+func TestPrintCSVEscapesControls(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+	}{
+		{name: "a pipe", opts: Options{CSV: true}},
+		{name: "a terminal", opts: Options{CSV: true, TTY: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, out, _ := newTestPrinter(t, tt.opts)
+
+			require.NoError(t, p.Print(Result{Table: &Table{
+				Headers: []string{"Name"},
+				Rows: [][]string{
+					{evil},
+					{"line1\nline2"},
+					{"\tTab"},
+					{"\x7f"},
+					{`=HYPERLINK("http://example.com")`},
+				},
+			}}))
+
+			got := out.String()
+			require.NotContains(t, got, "\x1b")
+			require.NotContains(t, got, "\x07")
+			require.NotContains(t, got, "\u009b")
+			require.NotContains(t, got, "\x7f")
+			require.NotContains(t, got, "line1\nline2")
+			require.Contains(t, got, evilShown)
+			require.Contains(t, got, `line1\nline2`)
+			require.Contains(t, got, "'\\tTab")
+			require.Contains(t, got, `\x7f`)
+			require.Contains(t, got, `"'=HYPERLINK`)
+		})
+	}
 }
 
 func TestPrintNilListAsEmptyList(t *testing.T) {

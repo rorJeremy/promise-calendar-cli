@@ -136,7 +136,7 @@ Anywhere else, and whenever `--json` is set, the shape is:
 {"ok": false, "error": {"code": "not_found", "message": "no event \"Prayer\"", "hint": "use the event's ID (`pcal events list --search Prayer` shows it)"}}
 ```
 
-`--jq` filters that envelope and implies `--json`. `--quiet` prints `data` only. `--csv` is for lists. A cell a spreadsheet would treat as a formula, one starting with `=`, `+`, `-`, or `@`, is prefixed with `'`.
+`--jq` filters that envelope and implies `--json`. `--quiet` prints `data` only. `--csv` is for lists. A cell a spreadsheet would treat as a formula, one starting with `=`, `+`, `-`, or `@`, is prefixed with `'`. Control characters in a cell are shown as escapes, in a pipe and in a terminal.
 
 Confirmations open on No. Enter and, on an accessible prompt, Ctrl-D answer No and exit 0. Esc, Ctrl-C, and SIGTERM cancel: one line on stderr, exit 130 or 143, and no envelope.
 

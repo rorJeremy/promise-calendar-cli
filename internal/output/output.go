@@ -295,8 +295,9 @@ func (p *Printer) runJQ(v any) error {
 	}
 }
 
-// printCSV writes a table as CSV, headers first, with every cell guarded
-// against spreadsheet formulas (see csvCell).
+// printCSV writes a table as CSV, headers first. Every cell is guarded
+// against spreadsheet formulas and has its control characters shown as
+// escapes (see csvCell).
 func (p *Printer) printCSV(t *Table) error {
 	w := csv.NewWriter(p.out)
 	if err := w.Write(csvRow(t.Headers)); err != nil {
@@ -320,16 +321,20 @@ func csvRow(row []string) []string {
 	return safe
 }
 
-// csvCell prefixes a cell that a spreadsheet would run as a formula (one
-// starting with =, +, -, @, a tab, or a carriage return) with ', which
-// makes it text, as OWASP's CSV injection guidance says. RSVP names come
-// from the public, so `rsvps list --csv` could otherwise carry a formula
-// into a staff member's spreadsheet.
+// csvCell makes one cell safe for a spreadsheet and for a terminal. A cell
+// a spreadsheet would run as a formula (one starting with =, +, -, @, a
+// tab, or a carriage return) is prefixed with ', which makes it text, as
+// OWASP's CSV injection guidance says. Every C0, DEL, and C1 control is
+// then shown as a Go escape, the same way human output does, so
+// `rsvps list --csv` can't retitle the window or ring the bell from a
+// public RSVP name. The escapes apply whether or not stdout is a terminal
+// (Jeremy's Gate 4c decision). The prefix is decided from the original
+// cell, before those escapes, so a leading tab is still quoted.
 func csvCell(cell string) string {
 	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
-		return "'" + cell
+		cell = "'" + cell
 	}
-	return cell
+	return visible(cell, false)
 }
 
 // printHuman writes a table under its summary, a card, the summary alone,

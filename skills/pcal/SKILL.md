@@ -14,7 +14,7 @@ pcal talks to the Promise Church calendar. People see tables. Scripts see a JSON
 
 - Pass `--json` when you need the envelope, or `--jq` to filter it. `--jq` implies `--json`. Do not pipe pcal to an external `jq`.
 - `--quiet` prints only `data`.
-- A list command accepts `--csv`. A cell that starts with `=`, `+`, `-`, or `@` is prefixed with `'`.
+- A list command accepts `--csv`. A cell that starts with `=`, `+`, `-`, or `@` is prefixed with `'`. Control characters in a cell are shown as escapes, in a pipe and in a terminal.
 - Human dates and times are in the calendar's time zone. JSON keeps the server's values.
 - pcal asks before a delete, a revoke, or rotating the website token. The question opens on No. Pass `--yes` to skip it. Esc cancels (exit 130) and changes nothing.
 
