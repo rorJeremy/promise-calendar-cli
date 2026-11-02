@@ -1313,7 +1313,7 @@ archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides: [{ goos: windows, formats: [zip] }]
-    files: [README*, completions/*]
+    files: [LICENSE, README*, completions/*]
 checksum: { name_template: checksums.txt, algorithm: sha256 }
 homebrew_casks:
   - name: pcal
