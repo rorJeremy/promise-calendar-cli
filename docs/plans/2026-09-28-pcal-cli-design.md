@@ -54,6 +54,7 @@ internal/
   auth/       browser login (listener, state, PKCE), credential storage
   config/     ~/.config/pcal/config.json; env + flag precedence
   commands/   one file per command group + *_test.go
+              (events_write.go is the write half of the events group)
   output/     envelope, table/JSON/CSV renderers, --jq, exit codes
   prompt/     huh forms for missing fields (TTY only)
   parse/      natural dates/times, --repeat → RRULE
@@ -122,7 +123,22 @@ pcal version | completion {bash,zsh,fish} | skill install
   same way, except that no match is exit 2 with a hint to run `pcal tags list`
   (Jeremy's Gate 4 decision). `rsvps delete` and `tokens revoke` take IDs only.
 - `events update` sends only the flags given; a flag with an empty value
-  (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field.
+  (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field. Moving an
+  all-day event's dates sends no times. `--all-day` sends both times as
+  null, and with `--start` or `--end` is a usage error.
+- `events create` asks for a missing title and date when both streams are
+  a terminal, and otherwise exits 1 before any request. Canceling that form
+  says "Canceled. Nothing was created." (exit 130, or 143 for SIGTERM). On
+  an accessible form, Esc is text, not a cancel: huh's line prompt has no
+  cancel, and only Confirm cancels on Esc. A multi-field accessible form
+  reads one line at a time, because huh's scanner would otherwise take every
+  later answer with the first line.
+- `--description-file` (`-` is stdin) reads at most 1 MiB. Together with
+  `--description` it is a usage error, and `-` on create is a usage error
+  when the title or the date is still missing, since both would read stdin.
+  `--image` is checked before any request: over 10 MB, or a directory, is a
+  usage error. The file type is the server's 422. `events image rm` reports
+  `{"removed": true}`; the server answers 204 with no body.
 - Event `ID` arguments accept a UUID, an exact title, or a unique title
   prefix, all case-insensitive. An exact title wins over prefixes, so
   `Worship` stays reachable when `Worship Night` exists. The server's search

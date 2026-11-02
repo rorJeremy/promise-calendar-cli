@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
@@ -82,6 +83,41 @@ func (p Prompter) Password(ctx context.Context, title string) (string, error) {
 		return "", err
 	}
 	return value, nil
+}
+
+// TextField is one line a form asks for. The answer is stored in Value.
+type TextField struct {
+	Title string
+	Value *string
+}
+
+// Text asks for each field, in order. A blank line is asked again. On a
+// drawn form, Esc and Ctrl-C cancel (ErrCanceled). An accessible form is
+// huh's line prompt, the same one Password uses for text: Esc is text
+// there, not a cancel. Confirm is the prompt that cancels on Esc.
+func (p Prompter) Text(ctx context.Context, fields ...TextField) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	inputs := make([]huh.Field, len(fields))
+	for i := range fields {
+		field := fields[i]
+		inputs[i] = huh.NewInput().Title(field.Title).Value(field.Value).Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("can't be blank")
+			}
+			return nil
+		})
+	}
+	asking := p
+	if p.Accessible {
+		// huh's PromptString wraps the reader in a bufio.Scanner, and that
+		// scanner fills a 4096-byte buffer (huh v2.0.3 accessibility.go).
+		// The next field's scanner then sees EOF. One line per Read leaves
+		// the later answers for the later fields.
+		asking.In = &lineReader{in: p.In}
+	}
+	return asking.run(ctx, huh.NewForm(huh.NewGroup(inputs...)))
 }
 
 // Confirm asks a yes/no question under title; def is the answer Enter

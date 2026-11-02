@@ -18,10 +18,18 @@ import (
 // newEventsCmd builds `pcal events`. List and show are Phase 10; later
 // phases add the write commands to this group.
 func newEventsCmd(a *app) *cobra.Command {
-	cmd := newGroupCmd("events", "List and show events")
+	cmd := newGroupCmd("events", "List, show, and change events")
 	cmd.AddCommand(
 		newEventsListCmd(a),
 		newEventsShowCmd(a),
+		newEventsCreateCmd(a),
+		newEventsUpdateCmd(a),
+		newEventsDeleteCmd(a),
+		newEventsPublishCmd(a, true),
+		newEventsPublishCmd(a, false),
+		newEventsToggleCmd(a, "website", "show_on_website"),
+		newEventsToggleCmd(a, "rsvp", "rsvp_enabled"),
+		newEventsImageCmd(a),
 	)
 	return cmd
 }

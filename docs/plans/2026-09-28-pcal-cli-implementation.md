@@ -1099,6 +1099,23 @@ goes.
   `--image` + `--image-url` → exit 1), and RRULE. 403 with a read token →
   exit 4.
 
+**Addition (Gate 4).** `--description` together with `--description-file`
+is a usage error. `--description-file -` on create, when `--title` or
+`--date` is missing, is a usage error before the file is read: the
+description and the create form would share stdin. Canceling the create
+form says "Canceled. Nothing was created." and exits 130 or 143, before
+any request. An accessible text field does not cancel on Esc (huh's
+`PromptString` keeps Esc as text); a drawn Esc does. huh's accessible
+prompt wraps its reader in a `bufio.Scanner` that fills 4096 bytes
+(huh v2.0.3 `accessibility.go` `PromptString`), so a second field would
+see EOF. pcal reads one line at a time and hands each line to that
+scanner. `events image rm` prints `{"removed": true}` — the server
+answers 204 with no body. The write commands live in `events_write.go`,
+a second file of the events group. A file of exactly 10 MB is uploaded;
+over that, and a directory, are usage errors. The early return that skips
+sending times when an all-day event's dates move is equivalent to the
+code after it, which also sends nothing when neither clock is known.
+
 Commit: "Add event write commands".
 
 ## Phase 12 — `pcal rsvps`, `tokens`, `website-token`

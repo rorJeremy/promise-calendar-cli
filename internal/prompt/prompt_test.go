@@ -379,6 +379,31 @@ func TestPlainDrawnPromptHasNoAttributes(t *testing.T) {
 	require.Empty(t, sgr)
 }
 
+// huh's accessible PromptString fills a 4096-byte scanner buffer, which would
+// take every later answer with the first line. A blank line is asked again,
+// and the next field still gets its own line.
+func TestAccessibleTextReadsOneLinePerField(t *testing.T) {
+	var title, date string
+	var out bytes.Buffer
+	p := Prompter{
+		In:         strings.NewReader("\nPrayer\n2026-10-31\n"),
+		Out:        &out,
+		Accessible: true,
+	}
+
+	err := p.Text(testContext(t),
+		TextField{Title: "Title", Value: &title},
+		TextField{Title: "Date", Value: &date},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "Prayer", title)
+	require.Equal(t, "2026-10-31", date)
+	require.Contains(t, out.String(), "can't be blank")
+	require.Contains(t, out.String(), "Title")
+	require.Contains(t, out.String(), "Date")
+}
+
 // syncBuffer is a bytes.Buffer safe to read while a form writes to it.
 type syncBuffer struct {
 	mu  sync.Mutex
