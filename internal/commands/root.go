@@ -373,6 +373,9 @@ func newRootCmd(a *app) *cobra.Command {
 		newWhoamiCmd(a),
 		newTagsCmd(a),
 		newEventsCmd(a),
+		newRSVPsCmd(a),
+		newTokensCmd(a),
+		newWebsiteTokenCmd(a),
 	)
 	return root
 }

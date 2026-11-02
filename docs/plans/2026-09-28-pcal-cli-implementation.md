@@ -1160,6 +1160,23 @@ golden files (`rsvps.json`, `access_tokens.json`, `api_token.json`,
 422 → exit 1 with the server's messages, 404 → exit 2, `--yes` / no-TTY
 confirmation, and `rotate` printing the token once.
 
+**Addition (Gate 4).** `rsvps` takes an event ID or a title, resolved the
+same way as an event ID (Phase 10). The design's line said `EVENT_ID`;
+the events commands already accept a title, and a staff member listing
+RSVPs has the same title in front of them. A UUID skips the search.
+Titles only resolve inside today−1y..today+2y, and the fake used here
+filters that window the way the server does. `rsvps delete` and
+`tokens revoke` report `{"deleted": true}` after a 204 (the server sends
+no body), as `events image rm` reports `{"removed": true}`. Answering No
+on revoke is `{"deleted": false}` and "Nothing was deleted." An empty
+`--phone` sends null; an omitted one is left out. Canceling the add form
+says "Canceled. Nothing was added." and exits 130 or 143, before any
+request. Accessible text still does not cancel on Esc. Human RSVP dates
+and token timestamps use the calendar zone, as event dates do. The three
+confirmations share `confirmNo` (Phase 9's Esc rule, including the
+accessible line). A stored-token forget that fails is a warning and does
+not claim the person is logged out.
+
 Commit: "Add RSVP, token, and website-token commands".
 
 ## Phase 13 — `version`, `completion`, `skill install`, README

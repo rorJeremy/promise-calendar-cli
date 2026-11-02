@@ -54,7 +54,8 @@ internal/
   auth/       browser login (listener, state, PKCE), credential storage
   config/     ~/.config/pcal/config.json; env + flag precedence
   commands/   one file per command group + *_test.go
-              (events_write.go is the write half of the events group)
+              (events_write.go is the write half of the events group;
+               confirm.go is the shared No-default confirmation)
   output/     envelope, table/JSON/CSV renderers, --jq, exit codes
   prompt/     huh forms for missing fields (TTY only)
   parse/      natural dates/times, --repeat → RRULE
@@ -91,9 +92,9 @@ pcal events image set ID (FILE | --url URL) [--alt TEXT]   # an upload or a link
 pcal events image rm ID
 
 pcal tags list [--csv] | create NAME [--color] | update ID|NAME [...] | delete ID|NAME [--yes]
-pcal rsvps list EVENT_ID [--date D] [--csv]
-pcal rsvps add EVENT_ID --name N --email E [--phone --date]
-pcal rsvps delete EVENT_ID RSVP_ID [--yes]
+pcal rsvps list EVENT [--date D] [--csv]
+pcal rsvps add EVENT --name N --email E [--phone --date]
+pcal rsvps delete EVENT RSVP_ID [--yes]
 pcal tokens list | revoke ID [--yes]
 pcal website-token show | rotate [--yes]
 
@@ -122,6 +123,14 @@ pcal version | completion {bash,zsh,fish} | skill install
   → exit 8. `tags update` and `tags delete` take an ID or a name matched the
   same way, except that no match is exit 2 with a hint to run `pcal tags list`
   (Jeremy's Gate 4 decision). `rsvps delete` and `tokens revoke` take IDs only.
+- The event argument on `rsvps` is an ID or a title, resolved as an event
+  ID is. An empty `--phone` sends null. `rsvps add` asks for a missing name
+  and email in a terminal and otherwise exits 1 before any request;
+  canceling that form says "Canceled. Nothing was added." `tokens revoke`
+  and `rsvps delete` report `{"deleted": true}` after a 204. Revoking the
+  token pcal is using forgets a stored token, or says to unset `PCAL_TOKEN`;
+  any other failure of that check is ignored. `website-token rotate` prints
+  the new token once and warns that the church website must be updated.
 - `events update` sends only the flags given; a flag with an empty value
   (`--end-date ''`, `--rrule ''`, `--tag ''`) clears that field. Moving an
   all-day event's dates sends no times. `--all-day` sends both times as
@@ -149,7 +158,8 @@ pcal version | completion {bash,zsh,fish} | skill install
   times use the calendar's time zone: "Sun Nov 1" (with the year when it
   isn't this year), "6:00pm–7:30pm", and "all day" when there are no times.
   JSON, `--quiet`, and `--jq` keep the server's values (Jeremy's Gate 4
-  decision). A blank `--tag` on `list` is a usage error: the list has no
+  decision). RSVP dates and token timestamps use the same formatting.
+  A blank `--tag` on `list` is a usage error: the list has no
   untagged filter, and on update that same flag clears the tags.
 - `publish`, `website on`, `rsvp on`, etc. are `PATCH /events/:id` with one field.
 
