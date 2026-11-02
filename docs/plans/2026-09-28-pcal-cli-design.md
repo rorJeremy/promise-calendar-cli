@@ -370,3 +370,5 @@ exit code.
 - v0.1.0 once `pcal login` works against production. Gate 5
   (2026-11-02) added the two files. Nothing is signed. The tag itself,
   the production smoke test, and the LICENSE decision are still Jeremy's.
+  The checklist exits if `PCAL_TOKEN` or `PCAL_URL` is set, and it merges
+  `origin/initial-implementation` (Gate 5c, G5b-F4).

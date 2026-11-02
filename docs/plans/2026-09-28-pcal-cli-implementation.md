@@ -313,6 +313,30 @@ commit, using the YAML in Phase 14 as written. `release.yml` runs only
 on `v*` tags. The live production smoke test and the `v0.1.0` tag are
 still Jeremy's, and there is still no LICENSE file.
 
+**Reviewed 2026-11-02 (Gate 5b), fixed 2026-11-02 (Gate 5c).** An
+independent review of the Phase 14 release pipeline found 4 issues,
+G5b-F1–F4 (1 Medium, 3 Low; nothing Critical or High). Gate 5c fixed
+them, check first, in four commits. Jeremy's decisions:
+- F1: `set -eu` and `test -s` on each completion file, in
+  `.goreleaser.yaml` and in the Phase 14 fence.
+- F2: a goreleaser builds post hook that fails the release when the
+  stamped version, commit, or date is still the default. A `release.yml`
+  step would not run during `goreleaser release --snapshot`, so the hook
+  is the one that fails a local snapshot too. On the release runner the
+  binary is linux/amd64. The six targets share one ldflags list.
+- F3: `cache: false` on the release job's mise-action step. `test.yml`
+  keeps its cache.
+- F4: the release checklist below is the corrected one. It exits when
+  `PCAL_TOKEN` or `PCAL_URL` is set, merges `origin/initial-implementation`,
+  and checks the read-only create for exit 4 instead of leaving it as a
+  bare command under `set -e`.
+- Also `skip_upload: auto`, so a prerelease tag does not update the cask.
+  `v0.1.0` is not a prerelease.
+Gate 5's commit is not rewritten. The Gate 5b claims ledger held for
+that commit's checkable claims. The snapshot date in its message is the
+clock of that run, which is what `{{ .Date }}` is. No message correction.
+The live production smoke and the `v0.1.0` tag stay Jeremy's.
+
 Corrections to Gate 4's commit messages:
 1. 3153727 says 8 negative controls. `TestServerAcceptsRejectsWhatTheServerRejects`
    lists 13 rules (`internal/parse/parse_test.go`, the slice at the lines
@@ -1376,11 +1400,67 @@ homebrew_casks:
   still checked by `goreleaser check`, the snapshot, and the live smoke
   test below.
 
-Live smoke test against production (PR 2 is deployed, so this is unblocked): `pcal login` →
-`whoami` → `events list` → create a draft test event → update → image set/rm →
-delete → `pcal login --read-only` and a write attempt → exit 4 → `pcal logout`
-(the token disappears from `/my/access_tokens`) → an SSH-session login via
-paste. Then tag `v0.1.0`.
+Release checklist (Gate 5c, G5b-F4). Jeremy runs this. It hits
+production on purpose, starting at `pcal login`. An agent must not run
+it. `set -e` is on. If `PCAL_TOKEN` or `PCAL_URL` is set, the script
+prints which one and exits before `whoami`. With both unset, the URL is
+production (`DefaultURL`, https://calendar.promisechurch.io). The merge
+is `origin/initial-implementation`, the ref `git fetch` updates. The
+read-only create must exit 4, so it is not a bare command under
+`set -e`; the script checks that status, then logs out. The second
+`pcal login` revokes the previous browser token (`storeLogin` in
+`login.go`). Logout revokes the read-only browser token. Both should be
+gone from `/my/access_tokens`. `gh secret set` reads the token from
+stdin when `--body` is omitted. `mise use -g` may not change `PATH`
+until mise's shell hook runs again. A new prompt, or `pcal` via mise's
+shim, is the check after that.
+
+```sh
+set -e
+gh repo create rorJeremy/homebrew-tap --public --add-readme --description "Homebrew tap for pcal"
+gh secret set HOMEBREW_TAP_TOKEN --repo rorJeremy/promise-calendar-cli
+# LICENSE is still an open decision. fizzy-cli and basecamp-cli use MIT.
+
+cd ~/promise-calendar-cli
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+git merge --ff-only origin/initial-implementation
+git push origin main
+
+unset PCAL_NO_KEYRING
+if [ -n "${PCAL_TOKEN+x}" ]; then echo PCAL_TOKEN_IS_SET; exit 1; fi
+if [ -n "${PCAL_URL+x}" ]; then echo PCAL_URL_IS_SET; exit 1; fi
+mise exec -- go build -o bin/pcal ./cmd/pcal
+bin/pcal login
+bin/pcal whoami
+bin/pcal events list
+bin/pcal events create --title "pcal test event (delete me)" --date <date> --draft
+bin/pcal events update <id> --description "pcal smoke update"
+bin/pcal events image set <id> <a real image, 10 MB or smaller>
+bin/pcal events image rm <id>
+bin/pcal events delete <id> --yes
+bin/pcal login --read-only
+status=0
+bin/pcal events create --title "pcal read-only must fail" --date <date> --draft || status=$?
+if [ "$status" -ne 4 ]; then
+  echo "read-only create exited $status, want 4"
+  exit 1
+fi
+bin/pcal logout
+# then, over SSH: bin/pcal login --remote
+
+git checkout main
+git pull --ff-only origin main
+git tag v0.1.0
+git push origin v0.1.0
+gh run list --repo rorJeremy/promise-calendar-cli --workflow Release --limit 5
+gh run watch --repo rorJeremy/promise-calendar-cli "$(gh run list --repo rorJeremy/promise-calendar-cli --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')"
+brew install rorJeremy/tap/pcal
+pcal version
+mise use -g github:rorJeremy/promise-calendar-cli@0.1.0
+pcal version
+```
 
 Commit: "Add release pipeline".
 
@@ -1415,19 +1495,20 @@ already makes:
 - `make check`, then `mise exec -- goreleaser release --clean`, with
   `GITHUB_TOKEN` and `HOMEBREW_TAP_TOKEN`.
 
-The live smoke test above, and `git tag v0.1.0`, stay manual.
+The release checklist above, and `git tag v0.1.0`, stay manual. Do not
+run that checklist from an agent.
 
 ## Manual follow-ups (Jeremy)
 
 1. Phase 0: `mise install` in the repo (after Phase 1 adds `mise.toml`), and
    remove the old Homebrew Go 1.17.2 with `brew uninstall go`.
-2. Before tagging v0.1.0:
-   - Create the **public** repo `rorJeremy/homebrew-tap`. It must be public for
-     `brew install` to work without auth.
-   - Create a fine-grained PAT with contents read/write on `homebrew-tap` only,
-     and add it as the `HOMEBREW_TAP_TOKEN` Actions secret on
-     `promise-calendar-cli`.
-   - Decide on a LICENSE. The repo is public, and with no license the code is
+2. Before tagging v0.1.0, run the Phase 14 release checklist. It creates
+   the public repo `rorJeremy/homebrew-tap` (public, or `brew install`
+   needs auth), sets `HOMEBREW_TAP_TOKEN` from stdin, fast-forwards `main`
+   from `origin/initial-implementation`, exits if `PCAL_TOKEN` or
+   `PCAL_URL` is set, unsets `PCAL_NO_KEYRING`, and checks the read-only
+   create for exit 4. It hits production. Do not run it from an agent.
+   Decide on a LICENSE. The repo is public, and with no license the code is
      "all rights reserved": per choosealicense.com/no-permission, others then
      have no permission to use, copy, modify, or share it, and GitHub's terms
      only let people view and fork it. For church staff using your own tool
