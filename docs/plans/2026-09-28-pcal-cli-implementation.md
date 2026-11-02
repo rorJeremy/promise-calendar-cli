@@ -990,8 +990,12 @@ values. Title resolution below is what the events commands use where Gate
      title → exit 8.
   2. Otherwise, titles that **start with** the argument: one → that event,
      several → exit 8.
-  3. None → exit 2 with the hint "use the event's ID (`pcal events list
-     --search …` shows it)".
+  3. None → exit 2 with the hint "use the event's ID. `pcal events list`
+     doesn't include a series outside today−1 year through today+2 years,
+     or one past 365 occurrences". The hint does not claim `events list
+     --search` will show that id: the list uses the same window and the
+     same cap, so it can't (Gate 4c, G4b-F2). The argument isn't included,
+     so a token-like title isn't repeated.
 
   Exit 8 lists the candidates (id, title, first date). Red: a table test for
   each case, including exact-beats-prefix and duplicate exact titles.
@@ -1339,7 +1343,9 @@ Commit: "Add release pipeline".
   always works.
 - **365-occurrence cap** (server, not fixed): long-running daily series drop
   out of `events list` and title resolution in later windows. Documented in
-  the README; a server fix would need no CLI change.
+  the README and in SKILL.md; the not-found hint says to use the ID and does
+  not claim `events list --search` will show it (Gate 4c, G4b-F2). A server
+  fix would need no CLI change.
 - **Keyring on headless Linux** (or a keychain that doesn't answer within
   10 seconds on the first call) falls back to a `0600` file with a warning
   (design). CI forces the fallback with `PCAL_NO_KEYRING=1`.

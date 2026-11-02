@@ -78,6 +78,8 @@ The default calendar is `https://calendar.promisechurch.io`. Point at another on
    pcal events show "Worship Night"
    ```
 
+   The calendar stops a series after 365 occurrences counted from its start, so an old daily series needs its UUID.
+
 4. Create a weekly event. In a terminal, a missing title or date is asked for.
 
    ```sh
@@ -133,7 +135,7 @@ Anywhere else, and whenever `--json` is set, the shape is:
 
 ```json
 {"ok": true, "data": [], "summary": "0 events Nov 2–Dec 2"}
-{"ok": false, "error": {"code": "not_found", "message": "no event \"Prayer\"", "hint": "use the event's ID (`pcal events list --search Prayer` shows it)"}}
+{"ok": false, "error": {"code": "not_found", "message": "no event \"Prayer\"", "hint": "use the event's ID. `pcal events list` doesn't include a series outside today−1 year through today+2 years, or one past 365 occurrences"}}
 ```
 
 `--jq` filters that envelope and implies `--json`. `--quiet` prints `data` only. `--csv` is for lists. A cell a spreadsheet would treat as a formula, one starting with `=`, `+`, `-`, or `@`, is prefixed with `'`. Control characters in a cell are shown as escapes, in a pipe and in a terminal.

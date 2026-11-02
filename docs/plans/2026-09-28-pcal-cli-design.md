@@ -161,7 +161,13 @@ pcal version | completion bash|zsh|fish | skill install
   prefix, all case-insensitive. An exact title wins over prefixes, so
   `Worship` stays reachable when `Worship Night` exists. The server's search
   matches anywhere in a title, so the CLI does this matching itself. Multiple
-  matches → exit 8 listing candidates.
+  matches → exit 8 listing candidates. Nothing in the window is exit 2. The
+  hint says to use the event's ID and does not claim `pcal events list
+  --search` will show it: the list uses the same window, and the server
+  stops a series after 365 occurrences from its start
+  (`RecurrenceExpandable::MAX_OCCURRENCES`), so an old daily series needs
+  its UUID (Jeremy's Gate 4c decision, G4b-F2). The hint doesn't include
+  the argument, so a token-like title isn't repeated.
 - `events list` shows occurrences: a recurring event appears once per
   occurrence, dated by the server's `occurrence_*` fields. Human dates and
   times use the calendar's time zone: "Sun Nov 1" (with the year when it

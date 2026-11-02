@@ -31,7 +31,8 @@ type eventRef struct {
 
 // resolveEvent finds the event arg names, by an exact title or a unique
 // title that starts with it. The server's q matches anywhere, so the list
-// is filtered here. Events outside today−1y..today+2y need their id.
+// is filtered here. Events outside today−1y..today+2y, and a series past
+// 365 occurrences from its start, need their id.
 func (a *app) resolveEvent(cmd *cobra.Command, s *session, loc *time.Location, arg string) (eventRef, error) {
 	now := a.now().In(loc)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
@@ -47,16 +48,20 @@ func (a *app) resolveEvent(cmd *cobra.Command, s *session, loc *time.Location, a
 	if found, ok, err := matchEvent(arg, refs); err != nil || ok {
 		return found, err
 	}
-	hint := "use the event's ID (`pcal events list --search " + arg + "` shows it)"
-	if looksLikeToken(arg) {
-		hint = "use the event's ID (`pcal events list` shows it)"
-	}
 	return eventRef{}, &output.Error{
 		Code:    output.CodeNotFound,
 		Message: "no event " + displayTagArg(arg),
-		Hint:    hint,
+		Hint:    eventNotFoundHint,
 	}
 }
+
+// eventNotFoundHint is the exit 2 hint when a title isn't in the search
+// window. It does not claim `pcal events list --search` will show the id:
+// that list uses the same window, and the server stops a series after 365
+// occurrences from its start, so neither can return an id this lookup
+// missed (Jeremy's Gate 4c decision). The argument is not included, so a
+// token-like title stays out of the error.
+const eventNotFoundHint = "use the event's ID. `pcal events list` doesn't include a series outside today−1 year through today+2 years, or one past 365 occurrences"
 
 func dedupeEvents(occurrences []client.Occurrence) []eventRef {
 	index := map[string]int{}

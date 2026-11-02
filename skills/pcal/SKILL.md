@@ -20,7 +20,7 @@ pcal talks to the Promise Church calendar. People see tables. Scripts see a JSON
 
 ## IDs
 
-- An event argument accepts a UUID, an exact title, or a unique title prefix. An exact title wins over a prefix. Several matches is exit 8. Events outside today−1 year through today+2 years need the UUID.
+- An event argument accepts a UUID, an exact title, or a unique title prefix. An exact title wins over a prefix. Several matches is exit 8. Events outside today−1 year through today+2 years need the UUID. A series also stops after 365 occurrences from its start, so an old daily series needs the UUID.
 - `tags update` and `tags delete` take an ID or a name: exact case, then a unique case-insensitive match. Two names that differ only by case is exit 8. No match is exit 2.
 - `rsvps delete` takes the RSVP's ID, not the person's name. `tokens revoke` takes the token's ID, not its description.
 - `--tag` takes tag names and resolves them to IDs.

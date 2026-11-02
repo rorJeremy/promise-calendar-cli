@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +15,13 @@ import (
 
 	"github.com/rorJeremy/promise-calendar-cli/internal/client"
 	"github.com/rorJeremy/promise-calendar-cli/internal/config"
+	"github.com/rorJeremy/promise-calendar-cli/skills"
 )
+
+// eventNotFoundHintWant is the exit 2 hint. It names the 365 cap and does
+// not claim `pcal events list --search` will show an id the list can't
+// return (Gate 4c, G4b-F2). The unicode minus matches the skill.
+const eventNotFoundHintWant = "use the event's ID. `pcal events list` doesn't include a series outside today−1 year through today+2 years, or one past 365 occurrences"
 
 const worshipNightID = "2c8f0476-9289-5844-9a29-c7fb20a9f3b3"
 
@@ -723,7 +732,9 @@ func TestEventsShowTitleNotFound(t *testing.T) {
 	env := decodeError(t, r.stdout)
 	require.Equal(t, "not_found", env.Error.Code)
 	require.Contains(t, env.Error.Message, `no event "Night"`)
-	require.Contains(t, env.Error.Hint, "pcal events list --search Night")
+	require.Equal(t, eventNotFoundHintWant, env.Error.Hint)
+	require.NotContains(t, r.stdout+r.stderr, "--search")
+	require.NotContains(t, env.Error.Hint, "shows it")
 	require.Zero(t, countMethod(cal, "GET", "/events/"+worshipNightID))
 }
 
@@ -738,8 +749,26 @@ func TestEventsShowDoesntRepeatATokenLikeTitle(t *testing.T) {
 
 	require.Equal(t, 2, r.code)
 	require.NotContains(t, r.stdout+r.stderr, "pcal_secretvalue")
-	require.Contains(t, decodeError(t, r.stdout).Error.Hint, "pcal events list")
+	require.Equal(t, eventNotFoundHintWant, decodeError(t, r.stdout).Error.Hint)
 	require.NotContains(t, decodeError(t, r.stdout).Error.Hint, "--search")
+}
+
+// The plan says the README and the skill document the server's 365
+// occurrence cap and tell the reader an old series needs its UUID.
+func TestReadmeAndSkillDocumentTheOccurrenceCap(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	readme, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "README.md"))
+	require.NoError(t, err)
+	text := string(readme)
+	require.Contains(t, text, "365")
+	require.Contains(t, text, "UUID")
+	require.NotContains(t, text, "events list --search")
+	require.Contains(t, text, eventNotFoundHintWant)
+
+	skill := string(skills.Skill)
+	require.Contains(t, skill, "365")
+	require.Contains(t, skill, "old daily series needs the UUID")
 }
 
 func TestDedupeEventsKeepsTheEarliestDate(t *testing.T) {
