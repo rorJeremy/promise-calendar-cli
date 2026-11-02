@@ -1268,7 +1268,7 @@ project_name: pcal
 before:
   hooks:
     - go mod tidy
-    - sh -c 'mkdir -p completions && for s in bash zsh fish; do go run ./cmd/pcal completion $s > completions/pcal.$s; done'
+    - sh -c 'set -eu; mkdir -p completions; for s in bash zsh fish; do go run ./cmd/pcal completion $s > completions/pcal.$s; test -s completions/pcal.$s || { echo "pcal completion failed; completions/pcal.$s is missing or empty" >&2; exit 1; }; done'
 builds:
   - main: ./cmd/pcal
     binary: pcal
@@ -1335,8 +1335,17 @@ homebrew_casks:
   `github:basecamp/basecamp-cli`, which uses the same template, resolved the
   right archive for linux/macOS × x64/arm64 and windows-x64 and stripped the
   tag's `v`.)
-- **Red step:** none. This phase is configuration, checked by
-  `goreleaser check`, the snapshot, and the live smoke test below.
+- **Completion files fail closed (Gate 5c, G5b-F1).** The before hook
+  runs with `set -eu`, and `test -s` each `completions/pcal.$s`. If a
+  shell's completion command fails, or the file is missing or empty,
+  the hook prints `pcal completion failed; completions/pcal.<shell> is
+  missing or empty` and exits non-zero. Goreleaser then stops, instead
+  of publishing a cask that names files the archive does not have.
+- **Red step:** none for the original pipeline. Gate 5c's red check for
+  this hook is a scratch snapshot whose completion files are empty: the
+  old hook exits 0, and this one exits 1. The rest of the phase is still
+  checked by `goreleaser check`, the snapshot, and the live smoke test
+  below.
 
 Live smoke test against production (PR 2 is deployed, so this is unblocked): `pcal login` →
 `whoami` → `events list` → create a draft test event → update → image set/rm →
@@ -1346,8 +1355,12 @@ paste. Then tag `v0.1.0`.
 
 Commit: "Add release pipeline".
 
-**Done at Gate 5 (2026-11-02).** `.goreleaser.yaml` is the YAML above,
-unchanged. goreleaser 2.19.0's `check` exits 2 on the old `install:`
+**Done at Gate 5 (2026-11-02).** At `eb6e0ba`, `.goreleaser.yaml` matched
+the Phase 14 YAML as written then. Gate 5c (G5b-F1) changes the
+completion hook, in the file and in the fence above: `set -eu` and
+`test -s` on each generated file.
+
+goreleaser 2.19.0's `check` exits 2 on the old `install:`
 Ruby form ("configuration is valid, but uses deprecated properties")
 and exits 0 on this file, with no deprecation warning.
 `completions/` and `dist/` were already in `.gitignore`. The `go mod

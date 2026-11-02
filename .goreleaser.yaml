@@ -3,7 +3,7 @@ project_name: pcal
 before:
   hooks:
     - go mod tidy
-    - sh -c 'mkdir -p completions && for s in bash zsh fish; do go run ./cmd/pcal completion $s > completions/pcal.$s; done'
+    - sh -c 'set -eu; mkdir -p completions; for s in bash zsh fish; do go run ./cmd/pcal completion $s > completions/pcal.$s; test -s completions/pcal.$s || { echo "pcal completion failed; completions/pcal.$s is missing or empty" >&2; exit 1; }; done'
 builds:
   - main: ./cmd/pcal
     binary: pcal
