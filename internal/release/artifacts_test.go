@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,47 +17,60 @@ import (
 // include LICENSE, README.md, and completions in the archives.
 // This complements TestGoReleaserConfig by checking real artifacts, not just YAML.
 //
-// Run with: go test -v -tags=snapshot
-// or: make test-snapshot (if added to Makefile)
+// Run with: TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
+// or: make test-snapshot
 //
 // Skip in normal `make check` to keep it fast (snapshot build takes ~3s).
+// Builds into a temp directory and leaves the repo's dist/ untouched.
 func TestSnapshotArtifacts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping snapshot build test in short mode")
 	}
 
 	// Check if we're in snapshot test mode
-	// Use build tag or environment variable
 	if os.Getenv("TEST_SNAPSHOT") == "" {
 		t.Skip("Skipping snapshot build test (set TEST_SNAPSHOT=1 to run)")
 	}
 
-	// Find goreleaser
+	// Find goreleaser - must FAIL if not found (not skip)
 	goreleaser, err := exec.LookPath("goreleaser")
 	if err != nil {
-		t.Skip("goreleaser not found in PATH")
+		t.Fatal("goreleaser not found in PATH (required for artifact validation)")
 	}
 
-	// Change to repo root (must be absolute for os.Chdir to work reliably)
+	// Get repo root (don't chdir to it - use cmd.Dir instead)
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("failed to get absolute path to repo root: %v", err)
 	}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatalf("failed to cd to repo root: %v", err)
-	}
-	t.Logf("Changed to repo root: %s", repoRoot)
 
-	// Run snapshot build
+	// Build into a temp directory (don't touch repo's dist/)
+	tempDist := t.TempDir()
+	t.Logf("Building into temp dist: %s", tempDist)
+
+	// Create a temporary config with custom dist path
+	tempConfig := filepath.Join(t.TempDir(), ".goreleaser.yaml")
+	origConfig, err := os.ReadFile(filepath.Join(repoRoot, ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read .goreleaser.yaml: %v", err)
+	}
+	// Prepend dist setting to config
+	configWithDist := fmt.Sprintf("dist: %s\n%s", tempDist, string(origConfig))
+	if err := os.WriteFile(tempConfig, []byte(configWithDist), 0644); err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	// Run snapshot build (without --clean, with custom config that sets dist)
 	t.Log("Running goreleaser snapshot build...")
-	cmd := exec.Command(goreleaser, "release", "--snapshot", "--clean", "--skip=publish")
+	cmd := exec.Command(goreleaser, "release", "--snapshot", "--skip=publish", "--config", tempConfig)
+	cmd.Dir = repoRoot // Run from repo root, but build into temp
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("goreleaser snapshot failed: %v\nOutput:\n%s", err, output)
 	}
 
-	// Check archives in dist/
-	distDir := "dist"
+	// Check archives in temp dist (not repo dist/)
+	distDir := tempDist
 	entries, err := os.ReadDir(distDir)
 	if err != nil {
 		t.Fatalf("failed to read dist directory: %v", err)
