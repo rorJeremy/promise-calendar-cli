@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # Score release-guard mutants.
 #
-# KILLED only when the test exits non-zero AND its output contains the
-# assertion tied to that mutant. A passing test is SURVIVED. A build
-# error, panic, timeout, patch miss, compile error, or any other failure
-# is INVALID or ERROR. The process exits non-zero if any mutant is
-# SURVIVED, INVALID, or ERROR.
+# A single test run is KILLED only when it exits non-zero AND its output
+# contains the assertion tied to that mutant. A passing test is SURVIVED.
+# A build error, panic, timeout, skip, patch miss, compile error, or any
+# other failure is INVALID or ERROR.
 #
-# Every mutant is also run, unchanged, against the unmutated guard. That
-# control must fail with the same assertion. Guard-code patches delete or
-# weaken one check; the input is one that only that check rejects, so the
-# mutated guard passes (SURVIVED) when the patch does what it says.
+# Config and artifact mutants are bad release configs. Both the control
+# and the mutant run use the unmutated guard, so both must be KILLED.
 #
-# Two scoring proofs run after the mutants and are not part of the tally.
-# A comment-only edit must score SURVIVED. A config goreleaser cannot
-# build must score ERROR. A proof that scores as anything else fails the
-# process. The proofs stay in this script so the scorer cannot quietly go
-# back to treating "no PASS word" as a kill: a passing go test without
-# -v prints "ok", not "PASS".
+# Guard mutants (G*) test whether one check is load-bearing. CONFIRMED
+# means the unmutated guard fails with that assertion and the mutated
+# guard passes on the same input. CONFIRMED is not a failure. Anything
+# else on a guard mutant fails the command: NOT_ISOLATED when the control
+# does not reject the input, REDUNDANT_OR_INVALID_MUTANT when the mutant
+# still fails, or INVALID/ERROR when the run could not be scored.
+#
+# The process exits 0 only when every config and artifact mutant is
+# KILLED, every guard mutant is CONFIRMED, and both scoring proofs score
+# as intended.
+#
+# The proofs are not part of the mutant tally. A comment-only edit must
+# score SURVIVED. A config goreleaser cannot build must score ERROR. A
+# passing go test without -v prints "ok", not "PASS".
 #
 # Runs in a detached git worktree. Does not edit the checkout that
 # started it. Not part of `make check`.
@@ -240,7 +245,10 @@ RESULTS="${LOG_DIR}/results.tsv"
 printf 'id\tmutation\tinput\tcontrol\tmutant\tstatus\treason\n' >"${RESULTS}"
 
 KILLED_N=0
+CONFIRMED_N=0
 SURVIVED_N=0
+NOT_ISOLATED_N=0
+REDUNDANT_N=0
 INVALID_N=0
 ERROR_N=0
 EXIT_CODE=0
@@ -252,15 +260,24 @@ record() {
 	reason="${reason//$'\n'/ }"
 	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 		"${id}" "${mutation}" "${input}" "${control}" "${mutant}" "${status}" "${reason}" >>"${RESULTS}"
-	printf '%-4s control=%-8s mutant=%-8s status=%-8s %s\n' \
+	printf '%-4s control=%-8s mutant=%-8s status=%-28s %s\n' \
 		"${id}" "${control}" "${mutant}" "${status}" "${mutation}"
-	if [[ "${status}" != "KILLED" ]]; then
+	if [[ "${status}" != "KILLED" && "${status}" != "CONFIRMED" ]]; then
 		printf '     input: %s\n     %s\n' "${input}" "${reason}"
 	fi
 	case "${status}" in
 	KILLED) KILLED_N=$((KILLED_N + 1)) ;;
+	CONFIRMED) CONFIRMED_N=$((CONFIRMED_N + 1)) ;;
 	SURVIVED)
 		SURVIVED_N=$((SURVIVED_N + 1))
+		EXIT_CODE=1
+		;;
+	NOT_ISOLATED)
+		NOT_ISOLATED_N=$((NOT_ISOLATED_N + 1))
+		EXIT_CODE=1
+		;;
+	REDUNDANT_OR_INVALID_MUTANT)
+		REDUNDANT_N=$((REDUNDANT_N + 1))
 		EXIT_CODE=1
 		;;
 	INVALID)
@@ -316,7 +333,34 @@ run_mutant() {
 		mutant_reason="${REASON}"
 	fi
 
-	if [[ "${control_class}" != "KILLED" ]]; then
+	local kind
+	case "${id}" in
+	C*) kind="config" ;;
+	A*) kind="artifact" ;;
+	G*) kind="guard" ;;
+	*) kind="unknown" ;;
+	esac
+
+	if [[ "${kind}" == "guard" ]]; then
+		# Load-bearing check: the unmutated guard rejects the input and
+		# the mutated guard accepts it. Any other shape is a failure.
+		if [[ "${mutant_class}" == "INVALID" ]]; then
+			final="INVALID"
+			final_reason="${mutant_reason}"
+		elif [[ "${control_class}" == "ERROR" || "${mutant_class}" == "ERROR" ]]; then
+			final="ERROR"
+			final_reason="control ${control_class} (${control_reason}); mutant ${mutant_class} (${mutant_reason})"
+		elif [[ "${control_class}" != "KILLED" ]]; then
+			final="NOT_ISOLATED"
+			final_reason="control was ${control_class} (${control_reason}); unmutated guard did not reject this input with the assertion"
+		elif [[ "${mutant_class}" == "SURVIVED" ]]; then
+			final="CONFIRMED"
+			final_reason="control rejected the input; the mutated guard accepted it"
+		else
+			final="REDUNDANT_OR_INVALID_MUTANT"
+			final_reason="mutant was ${mutant_class} (${mutant_reason}); the weakened guard still failed"
+		fi
+	elif [[ "${control_class}" != "KILLED" ]]; then
 		final="INVALID"
 		final_reason="control was ${control_class} (${control_reason}); unmutated guard did not reject this input with the assertion"
 	elif [[ "${mutant_class}" == "INVALID" ]]; then
@@ -800,13 +844,10 @@ echo "MUTATION_TABLE_BEGIN"
 cat "${RESULTS}"
 echo "MUTATION_TABLE_END"
 echo
-echo "killed=${KILLED_N} survived=${SURVIVED_N} invalid=${INVALID_N} error=${ERROR_N}"
+echo "killed=${KILLED_N} confirmed=${CONFIRMED_N} survived=${SURVIVED_N} not_isolated=${NOT_ISOLATED_N} redundant=${REDUNDANT_N} invalid=${INVALID_N} error=${ERROR_N}"
 echo "scoring proofs: P1=${P1_CLASS} (want SURVIVED) P2=${P2_CLASS} (want ERROR)"
 echo "logs: ${LOG_DIR}"
-if [[ "${SURVIVED_N}" -gt 0 ]]; then
-	echo "Guard-code mutants that survive removed the only check that rejects their input."
-	echo "The unmutated control rejected that same input. Survived is not counted as killed."
-fi
+echo "Config and artifact mutants must be KILLED. Guard mutants must be CONFIRMED (control rejects, mutant accepts)."
 
 cd "${REPO_ROOT}"
 TREE_AFTER="$(git -C "${REPO_ROOT}" status --porcelain)"

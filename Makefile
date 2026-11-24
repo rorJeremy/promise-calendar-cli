@@ -47,8 +47,10 @@ test-snapshot:
 	TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
 
 ## test-mutations: score release-guard mutants in a git worktree.
-## KILLED only when the test fails with that mutant's assertion.
-## Exits non-zero on SURVIVED, INVALID, or ERROR. Not part of make check.
+## Config and artifact mutants are KILLED when their assertion fires.
+## Guard mutants are CONFIRMED when the control rejects the input and the mutant accepts it.
+## Exits 0 only when every C/A is KILLED, every G is CONFIRMED, and both proofs score as intended.
+## Not part of make check.
 test-mutations:
 	@bash internal/release/test_all_mutations.sh
 

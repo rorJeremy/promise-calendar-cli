@@ -4,30 +4,37 @@
 detached git worktree. It does not edit the checkout you started from.
 It is not part of `make check`.
 
-## Kill rule
+## How a run is scored
 
-A run is **KILLED** only when the test exits non-zero and the output
-contains that mutant's assertion. A passing test is **SURVIVED**. A
-build error, panic, timeout, missing tool, patch that does not apply,
-compile error, unchanged file, or any other failure is **INVALID** or
-**ERROR**, and the reason is printed.
+Every mutant runs twice. The control is the unmutated guard on that
+mutant's input. The mutant run applies the mutation and uses the same
+input.
 
-The command exits non-zero if any mutant is SURVIVED, INVALID, or ERROR.
+A test is **KILLED** only when it exits non-zero and the output contains
+that mutant's assertion. A passing test is **SURVIVED**. A build error,
+panic, timeout, skip, missing tool, patch that does not apply, compile
+error, or unchanged file is **INVALID** or **ERROR**, with the reason
+printed.
 
-Every mutant is also run against the unmutated guard (the control). The
-control must fail with the same assertion. The input is one that only
-the targeted check rejects: a failure of a different check is ERROR, not
-a kill.
+Config and artifact mutants are bad `.goreleaser.yaml` values. Both
+runs use the unmutated guard, so both must be **KILLED**.
 
-## What the mutants are
+Guard mutants (G1–G12) delete or weaken one check. They test whether
+that check is load-bearing. The desired outcome is **CONFIRMED**: the
+control fails with the assertion and the mutant passes on that same
+input. CONFIRMED is not a failure.
 
-Config and artifact mutants are bad `.goreleaser.yaml` values. The
-unmutated guard should reject each one with its own assertion, so the
-control and the mutant run are both KILLED.
+Any other guard outcome fails the command:
 
-Guard-code patches delete or weaken one check. The input is one the
-unmutated guard rejects and that the weakened guard accepts. Those
-mutants are SURVIVED. That is the score; it is not a kill.
+- **NOT_ISOLATED** — the control does not fail with the assertion
+- **REDUNDANT_OR_INVALID_MUTANT** — the mutant still fails
+- **INVALID** or **ERROR** — the run could not be scored
+
+## Exit status
+
+The command exits 0 only when every config and artifact mutant is
+KILLED, every guard mutant is CONFIRMED, and both scoring proofs score
+as intended. Anything else exits non-zero.
 
 ## Scoring proofs
 
