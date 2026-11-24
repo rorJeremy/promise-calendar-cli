@@ -2,7 +2,6 @@ package release_test
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -30,43 +29,25 @@ func TestGoReleaserConfig(t *testing.T) {
 		t.Fatal(".goreleaser.yaml has no archives configuration")
 	}
 
-	// Check that LICENSE is in the files list
-	archiveFiles := config.Archives[0].Files
-	hasLicense := false
-	for _, file := range archiveFiles {
-		if file == "LICENSE" || strings.Contains(file, "LICENSE") {
-			hasLicense = true
-			break
+	// Check EVERY archive entry (not just archives[0])
+	for i, archive := range config.Archives {
+		archiveFiles := archive.Files
+		
+		// Required files: exact matches only (not substring or fuzzy)
+		// This prevents LICENSE.bak, MY_README, etc. from passing
+		required := []string{"LICENSE", "README*", "completions/*"}
+		
+		for _, requiredFile := range required {
+			found := false
+			for _, file := range archiveFiles {
+				if file == requiredFile {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("archives[%d]: %q missing from files. Found: %v", i, requiredFile, archiveFiles)
+			}
 		}
-	}
-
-	if !hasLicense {
-		t.Errorf("LICENSE missing from .goreleaser.yaml archives.files. Found: %v", archiveFiles)
-	}
-
-	// Also check for README
-	hasReadme := false
-	for _, file := range archiveFiles {
-		if strings.Contains(file, "README") {
-			hasReadme = true
-			break
-		}
-	}
-
-	if !hasReadme {
-		t.Errorf("README missing from .goreleaser.yaml archives.files. Found: %v", archiveFiles)
-	}
-
-	// Check for completions
-	hasCompletions := false
-	for _, file := range archiveFiles {
-		if strings.Contains(file, "completions") {
-			hasCompletions = true
-			break
-		}
-	}
-
-	if !hasCompletions {
-		t.Errorf("completions missing from .goreleaser.yaml archives.files. Found: %v", archiveFiles)
 	}
 }
