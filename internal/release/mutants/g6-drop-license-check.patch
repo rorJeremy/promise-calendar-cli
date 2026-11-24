@@ -1,0 +1,12 @@
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -163,9 +163,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 
+ 			for _, file := range files {
+ 				name := filepath.Base(file)
+-				if name == "LICENSE" {
+-					hasLicense = true
+-				}
+ 				if name == "README.md" {
+ 					hasReadme = true
+ 				}

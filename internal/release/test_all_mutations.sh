@@ -12,6 +12,8 @@ cleanup() {
     cd "$REPO_ROOT"
     git worktree remove --force "$WORKTREE_DIR" 2>/dev/null || true
     rm -rf "$WORKTREE_DIR"
+    # Prune stale worktree registrations (from hard-killed runs)
+    git worktree prune 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -209,12 +211,14 @@ test_artifact_mutant "A3: Archive missing completions/*" \
 
 ##############################################################################
 # GUARD-CODE MUTATIONS (mutate test code, test with bad config)
+# Uses git apply with unified diff patches for reliability
 ##############################################################################
 
-test_guard_mutant() {
+test_guard_mutant_simple() {
+    # For simple mutations that work with sed
     local name="$1"
-    local test_name="$2"  # TestGoReleaserConfig or TestSnapshotArtifacts
-    local file="$3"       # goreleaser_test.go or artifacts_test.go
+    local test_name="$2"
+    local file="$3"
     local sed_pattern="$4"
     local bad_config="$5"
     
@@ -223,7 +227,7 @@ test_guard_mutant() {
     # Backup
     cp internal/release/$file internal/release/$file.backup
     
-    # Apply mutation to guard code
+    # Apply mutation
     if ! sed -i "$sed_pattern" internal/release/$file 2>/dev/null; then
         echo "  ⊘ INVALID (sed pattern failed)"
         GUARD_INVALID=$((GUARD_INVALID + 1))
@@ -276,6 +280,59 @@ test_guard_mutant() {
     echo
 }
 
+test_guard_mutant_patch() {
+    # For complex mutations using unified diff patches
+    local name="$1"
+    local test_name="$2"
+    local patch_file="$3"
+    local bad_config="$4"
+    
+    echo "Guard: $name"
+    
+    # Apply patch
+    if ! git apply "$REPO_ROOT/internal/release/mutants/$patch_file" 2>/dev/null; then
+        echo "  ⊘ INVALID (patch failed to apply)"
+        GUARD_INVALID=$((GUARD_INVALID + 1))
+        git reset --hard HEAD >/dev/null 2>&1
+        echo
+        return
+    fi
+    
+    # Check compilation
+    if ! go test -c ./internal/release -o /dev/null 2>/dev/null; then
+        echo "  ⊘ INVALID (mutated code doesn't compile)"
+        GUARD_INVALID=$((GUARD_INVALID + 1))
+        git reset --hard HEAD >/dev/null 2>&1
+        echo
+        return
+    fi
+    
+    # Set up bad config
+    cp .goreleaser.yaml .goreleaser.yaml.backup
+    echo "$bad_config" > .goreleaser.yaml
+    
+    # Run test
+    if [[ "$test_name" == "TestSnapshotArtifacts" ]]; then
+        output=$(TEST_SNAPSHOT=1 go test -run "$test_name" ./internal/release 2>&1 || true)
+    else
+        output=$(go test -run "$test_name" ./internal/release 2>&1 || true)
+    fi
+    
+    # Check result
+    if echo "$output" | grep -q "PASS"; then
+        echo "  ✗ SURVIVED (broken guard not detected)"
+        TOTAL_SURVIVED=$((TOTAL_SURVIVED + 1))
+    else
+        echo "  ✓ KILLED (broken guard detected)"
+        GUARD_KILLED=$((GUARD_KILLED + 1))
+    fi
+    
+    # Restore
+    git reset --hard HEAD >/dev/null 2>&1
+    cp .goreleaser.yaml.backup .goreleaser.yaml
+    echo
+}
+
 echo "────────────────────────────────────────────────────────────────────────────────"
 echo "PART 3: GUARD-CODE MUTATIONS (12 mutants)"
 echo "────────────────────────────────────────────────────────────────────────────────"
@@ -316,35 +373,34 @@ checksum: { name_template: checksums.txt }'
 echo "YAML Guard Mutations (5 mutants):"
 echo
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G1: Drop LICENSE from required" \
     "TestGoReleaserConfig" \
     "goreleaser_test.go" \
     's/"LICENSE", //' \
     "$BAD_NO_LICENSE"
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G2: Drop completions from required" \
     "TestGoReleaserConfig" \
     "goreleaser_test.go" \
     's/, "completions\/\*"//' \
     "$BAD_NO_COMPLETIONS"
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G3: Only check archives[0]" \
     "TestGoReleaserConfig" \
     "goreleaser_test.go" \
     's/for i, archive := range config.Archives {/if len(config.Archives) > 0 { i := 0; archive := config.Archives[0]; _ = i; _ = archive/' \
     "$BAD_SECOND_ARCHIVE"
 
-test_guard_mutant \
+test_guard_mutant_patch \
     "G4: Use substring match for LICENSE" \
     "TestGoReleaserConfig" \
-    "goreleaser_test.go" \
-    's/if file == requiredFile {/if strings.Contains(file, requiredFile) {/' \
+    "g4-substring-match.patch" \
     "$BAD_LICENSE_BAK"
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G5: Invert found logic" \
     "TestGoReleaserConfig" \
     "goreleaser_test.go" \
@@ -354,7 +410,7 @@ test_guard_mutant \
 echo "Artifact Guard Mutations (7 mutants):"
 echo
 
-# Build config for artifact mutations (needs builds section)
+# Build config for artifact mutations
 BUILD_BAD_NO_LICENSE='version: 2
 project_name: pcal
 before:
@@ -403,49 +459,60 @@ archives:
     files: [LICENSE, README*]
 checksum: { name_template: checksums.txt }'
 
-test_guard_mutant \
+BUILD_BAD_LICENSE_BAK='version: 2
+project_name: pcal
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - main: ./cmd/pcal
+    binary: pcal
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64]
+archives:
+  - formats: [tar.gz, zip]
+    files: [LICENSE.bak, README*, completions/*]
+checksum: { name_template: checksums.txt }'
+
+test_guard_mutant_patch \
     "G6: Drop LICENSE check from artifact guard" \
     "TestSnapshotArtifacts" \
-    "artifacts_test.go" \
-    '/if name == "LICENSE" {/,/hasLicense = true/d' \
+    "g6-drop-license-check.patch" \
     "$BUILD_BAD_NO_LICENSE"
 
-test_guard_mutant \
+test_guard_mutant_patch \
     "G7: Drop README check from artifact guard" \
     "TestSnapshotArtifacts" \
-    "artifacts_test.go" \
-    '/if name == "README.md" {/,/hasReadme = true/d' \
+    "g7-drop-readme-check.patch" \
     "$BUILD_BAD_NO_README"
 
-test_guard_mutant \
+test_guard_mutant_patch \
     "G8: Drop completions check from artifact guard" \
     "TestSnapshotArtifacts" \
-    "artifacts_test.go" \
-    '/if strings.HasPrefix(name, "pcal.") &&/,/hasCompletions = true/d' \
+    "g8-drop-completions-check.patch" \
     "$BUILD_BAD_NO_COMPLETIONS"
 
-test_guard_mutant \
+test_guard_mutant_patch \
     "G9: Accept any base name for LICENSE" \
     "TestSnapshotArtifacts" \
-    "artifacts_test.go" \
-    's/name == "LICENSE"/strings.Contains(name, "LICENSE")/' \
-    "$(echo "$BUILD_BAD_NO_LICENSE" | sed 's/README\*/LICENSE.bak, README*/')"
+    "g9-license-substring.patch" \
+    "$BUILD_BAD_LICENSE_BAK"
 
-test_guard_mutant \
+test_guard_mutant_patch \
     "G10: Skip zip archives" \
     "TestSnapshotArtifacts" \
-    "artifacts_test.go" \
-    's/for _, ext := range \[\]string{"\.tar\.gz", "\.zip"} {/for _, ext := range []string{".tar.gz"} {/' \
+    "g10-skip-zip.patch" \
     "$BUILD_BAD_NO_LICENSE"
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G11: Treat zero archives as pass" \
     "TestSnapshotArtifacts" \
     "artifacts_test.go" \
     's/if len(archives) == 0 {/if len(archives) < 0 {/' \
     "$BUILD_BAD_NO_LICENSE"
 
-test_guard_mutant \
+test_guard_mutant_simple \
     "G12: Only check first archive" \
     "TestSnapshotArtifacts" \
     "artifacts_test.go" \
@@ -491,6 +558,10 @@ if [ $TOTAL_SURVIVED -gt 0 ]; then
     echo "⨯ Some mutants survived!"
     exit 1
 else
-    echo "✓ All valid mutants killed!"
+    if [ $TOTAL_INVALID -gt 0 ]; then
+        echo "⚠ Some mutants were invalid"
+        exit 1
+    fi
+    echo "✓ All mutants killed!"
     exit 0
 fi

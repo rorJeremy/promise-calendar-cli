@@ -20,6 +20,10 @@ func captureGitStatus(t *testing.T, repoRoot string) string {
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// When TEST_SNAPSHOT=1, git failure is a real error (not just non-git repo)
+		if os.Getenv("TEST_SNAPSHOT") != "" {
+			t.Fatalf("git status failed: %v\nOutput: %s", err, output)
+		}
 		t.Logf("git status failed (non-git repo?): %v", err)
 		return ""
 	}

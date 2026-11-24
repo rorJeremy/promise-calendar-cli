@@ -1,0 +1,17 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index a4fa841..782110f 100644
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -169,12 +169,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 				if name == "README.md" {
+ 					hasReadme = true
+ 				}
+-				if strings.HasPrefix(name, "pcal.") &&
+-					(strings.HasSuffix(name, ".bash") ||
+-						strings.HasSuffix(name, ".zsh") ||
+-						strings.HasSuffix(name, ".fish")) {
+-					hasCompletions = true
+-				}
+ 			}
+ 
+ 			if !hasLicense {
