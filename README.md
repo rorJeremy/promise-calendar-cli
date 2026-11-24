@@ -6,7 +6,7 @@ In a terminal it prints tables. Piped, or with `--json`, it prints a JSON envelo
 
 ## Install
 
-Homebrew, once the tap exists:
+Homebrew:
 
 ```sh
 brew install rorJeremy/tap/pcal
@@ -160,4 +160,4 @@ Confirmations open on No. Enter and, on an accessible prompt, Ctrl-D answer No a
 
 ## License
 
-No license is set yet. Until there is one, the code is all rights reserved.
+MIT License. See [LICENSE](LICENSE) for details.
