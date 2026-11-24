@@ -46,11 +46,11 @@ check: fmt-check vet lint tidy-check test
 test-snapshot:
 	TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
 
-## test-mutations: mutation testing for release guards (~6s)
-## Tests that guards catch config errors (YAML) and missing files (artifacts).
+## test-mutations: comprehensive mutation testing (~8s)
+## Tests: 10 config + 3 artifact + 7 guard-code = 20 mutants total
 ## Not part of 'make check' - run explicitly to validate guard effectiveness.
 test-mutations:
-	@bash internal/release/full_mutation_test.sh
+	@bash internal/release/test_all_mutations.sh
 
 ## golden: replace testdata/api/ with the calendar app's golden JSON, the
 ## API contract (make golden RAILS=../promise-church-calendar). Manual: check

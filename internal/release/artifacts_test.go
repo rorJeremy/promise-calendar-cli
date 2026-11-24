@@ -54,11 +54,34 @@ func TestSnapshotArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read .goreleaser.yaml: %v", err)
 	}
+
+	// Guard: Check if .goreleaser.yaml already has a dist: key
+	if strings.Contains(string(origConfig), "\ndist:") || strings.HasPrefix(string(origConfig), "dist:") {
+		t.Fatal(".goreleaser.yaml already contains a dist: key - cannot override safely")
+	}
+
 	// Prepend dist setting to config
 	configWithDist := fmt.Sprintf("dist: %s\n%s", tempDist, string(origConfig))
 	if err := os.WriteFile(tempConfig, []byte(configWithDist), 0644); err != nil {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
+
+	// Guard: Check completions/ before build (hooks may create it)
+	completionsExisted := false
+	if _, err := os.Stat(filepath.Join(repoRoot, "completions")); err == nil {
+		completionsExisted = true
+	}
+
+	// If completions/ gets created by hooks, we'll clean it up
+	defer func() {
+		if !completionsExisted {
+			compPath := filepath.Join(repoRoot, "completions")
+			if _, err := os.Stat(compPath); err == nil {
+				t.Logf("Cleaning up completions/ created by goreleaser hooks")
+				_ = os.RemoveAll(compPath)
+			}
+		}
+	}()
 
 	// Run snapshot build (without --clean, with custom config that sets dist)
 	t.Log("Running goreleaser snapshot build...")
