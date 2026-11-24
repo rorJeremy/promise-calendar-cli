@@ -37,8 +37,10 @@ jobs:
       - run: make check
 
       # Validate release archives BEFORE publishing
+      # Use mise exec to ensure goreleaser is on PATH (mise-action with cache: false
+      # doesn't guarantee PATH modification, so match the final goreleaser step)
       - name: Validate release archives
-        run: make test-snapshot
+        run: mise exec -- make test-snapshot
 
       - run: mise exec -- goreleaser release --clean
         env:
