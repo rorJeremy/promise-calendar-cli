@@ -1,0 +1,13 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..dffa9a4 100644
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -135,7 +135,7 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 		archives = append(archives, matches...)
+ 	}
+ 
+-	if len(archives) == 0 {
++	if len(archives) < 0 {
+ 		t.Fatal("no archives found in temp dist")
+ 	}
+ 

@@ -1,0 +1,30 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..b81506a 100644
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -161,15 +161,11 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 			}
+ 
+ 			// Check required files
+-			hasLicense := false
+ 			hasReadme := false
+ 			hasCompletions := false
+ 
+ 			for _, file := range files {
+ 				name := filepath.Base(file)
+-				if name == "LICENSE" {
+-					hasLicense = true
+-				}
+ 				if name == "README.md" {
+ 					hasReadme = true
+ 				}
+@@ -181,9 +177,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 				}
+ 			}
+ 
+-			if !hasLicense {
+-				t.Errorf("missing required file: LICENSE. Files: %v", files)
+-			}
+ 			if !hasReadme {
+ 				t.Errorf("missing required file: README.md. Files: %v", files)
+ 			}

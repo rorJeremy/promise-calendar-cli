@@ -1,0 +1,16 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..0f95b96 100644
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -142,7 +142,10 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 	t.Logf("Found %d archives to check", len(archives))
+ 
+ 	// Check each archive
+-	for _, archivePath := range archives {
++	for i, archivePath := range archives {
++		if i > 0 {
++			continue
++		}
+ 		archiveName := filepath.Base(archivePath)
+ 		t.Run(archiveName, func(t *testing.T) {
+ 			var files []string

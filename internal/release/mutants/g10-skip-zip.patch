@@ -1,0 +1,13 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..21ddb21 100644
+--- a/internal/release/artifacts_test.go
++++ b/internal/release/artifacts_test.go
+@@ -127,7 +127,7 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 
+ 	// Find all archives (goreleaser creates one per platform)
+ 	archives := []string{}
+-	for _, ext := range []string{".tar.gz", ".zip"} {
++	for _, ext := range []string{".tar.gz"} {
+ 		matches, err := filepath.Glob(filepath.Join(tempDist, "*"+ext))
+ 		if err != nil {
+ 			t.Fatalf("failed to glob archives: %v", err)

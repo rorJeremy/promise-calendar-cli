@@ -1,0 +1,13 @@
+diff --git a/internal/release/goreleaser_test.go b/internal/release/goreleaser_test.go
+index 6069039..a81eb0b 100644
+--- a/internal/release/goreleaser_test.go
++++ b/internal/release/goreleaser_test.go
+@@ -35,7 +35,7 @@ func TestGoReleaserConfig(t *testing.T) {
+ 
+ 		// Required files: exact matches only (not substring or fuzzy)
+ 		// This prevents LICENSE.bak, MY_README, etc. from passing
+-		required := []string{"LICENSE", "README*", "completions/*"}
++		required := []string{"README*", "completions/*"}
+ 
+ 		for _, requiredFile := range required {
+ 			found := false

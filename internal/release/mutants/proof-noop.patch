@@ -1,0 +1,13 @@
+diff --git a/internal/release/goreleaser_test.go b/internal/release/goreleaser_test.go
+index 6069039..5cffb46 100644
+--- a/internal/release/goreleaser_test.go
++++ b/internal/release/goreleaser_test.go
+@@ -33,7 +33,7 @@ func TestGoReleaserConfig(t *testing.T) {
+ 	for i, archive := range config.Archives {
+ 		archiveFiles := archive.Files
+ 
+-		// Required files: exact matches only (not substring or fuzzy)
++		// Required files: exact matches only (not substring or fuzzy).
+ 		// This prevents LICENSE.bak, MY_README, etc. from passing
+ 		required := []string{"LICENSE", "README*", "completions/*"}
+ 

@@ -7,7 +7,7 @@
 # The calendar app's checkout, for `make golden`.
 RAILS ?= ../promise-church-calendar
 
-.PHONY: build test vet lint fmt fmt-check tidy-check check golden clean
+.PHONY: build test vet lint fmt fmt-check tidy-check check test-snapshot test-mutations golden clean
 
 ## build: compile ./cmd/pcal into bin/pcal
 build:
@@ -39,6 +39,20 @@ tidy-check:
 
 ## check: everything CI checks
 check: fmt-check vet lint tidy-check test
+
+## test-snapshot: validate release archives contain LICENSE, README, completions
+## Builds goreleaser snapshot into temp dir and checks all archives (~3.5s).
+## Run before releasing to prove archives ship complete.
+test-snapshot:
+	TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
+
+## test-mutations: score release-guard mutants in a git worktree.
+## Config and artifact mutants are KILLED when their assertion fires.
+## Guard mutants are CONFIRMED when the control rejects the input and the mutant accepts it.
+## Exits 0 only when every C/A is KILLED, every G is CONFIRMED, and both proofs score as intended.
+## Not part of make check.
+test-mutations:
+	@bash internal/release/test_all_mutations.sh
 
 ## golden: replace testdata/api/ with the calendar app's golden JSON, the
 ## API contract (make golden RAILS=../promise-church-calendar). Manual: check

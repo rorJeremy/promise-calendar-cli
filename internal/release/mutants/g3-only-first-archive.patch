@@ -1,0 +1,14 @@
+diff --git a/internal/release/goreleaser_test.go b/internal/release/goreleaser_test.go
+index 6069039..361f8f9 100644
+--- a/internal/release/goreleaser_test.go
++++ b/internal/release/goreleaser_test.go
+@@ -31,6 +31,9 @@ func TestGoReleaserConfig(t *testing.T) {
+ 
+ 	// Check EVERY archive entry (not just archives[0])
+ 	for i, archive := range config.Archives {
++		if i > 0 {
++			continue
++		}
+ 		archiveFiles := archive.Files
+ 
+ 		// Required files: exact matches only (not substring or fuzzy)
