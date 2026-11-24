@@ -1,29 +1,40 @@
-# Mutation Testing for Release Guards
+# Mutation testing for release guards
 
-Comprehensive mutation testing: 25 mutants total
+`make test-mutations` runs `internal/release/test_all_mutations.sh` in a
+detached git worktree. It does not edit the checkout you started from.
+It is not part of `make check`.
 
-## Why Scripted (Not go-mutesting/gremlins)
+## Kill rule
 
-1. **Config mutations** - Target `.goreleaser.yaml` (YAML), not Go code
-2. **Archive validation** - Test real built archives (tar.gz/zip contents)
-3. **Guard-code mutations** - Mutate test code itself (both YAML & artifact guards)
-4. **Isolation** - Runs in git worktree (never modifies working tree, even on Ctrl-C)
-5. **Validation** - Checks compilation first (reports compile errors as INVALID, not killed)
+A run is **KILLED** only when the test exits non-zero and the output
+contains that mutant's assertion. A passing test is **SURVIVED**. A
+build error, panic, timeout, missing tool, patch that does not apply,
+compile error, unchanged file, or any other failure is **INVALID** or
+**ERROR**, and the reason is printed.
 
-## Running
+The command exits non-zero if any mutant is SURVIVED, INVALID, or ERROR.
 
-```bash
-make test-mutations  # ONE script, all mutations (~10s, isolated worktree)
-```
+Every mutant is also run against the unmutated guard (the control). The
+control must fail with the same assertion. The input is one that only
+the targeted check rejects: a failure of a different check is ERROR, not
+a kill.
 
-## Coverage (25 mutants)
+## What the mutants are
 
-**Config (10):** Drop LICENSE, LICENSE.bak, 2nd archive, drop README/completions, empty list, similar names, pattern variations
+Config and artifact mutants are bad `.goreleaser.yaml` values. The
+unmutated guard should reject each one with its own assertion, so the
+control and the mutant run are both KILLED.
 
-**Artifact (3):** Archives missing LICENSE, README, completions
+Guard-code patches delete or weaken one check. The input is one the
+unmutated guard rejects and that the weakened guard accepts. Those
+mutants are SURVIVED. That is the score; it is not a kill.
 
-**Guard-code (12):**
-- YAML guard (5): Drop from required, substring match, only check [0], invert logic, skip checks
-- Artifact guard (7): Drop LICENSE/README/completions, substring match, skip zip, only first archive, zero-length check
+## Scoring proofs
 
-Mutants marked INVALID when: compile error, sed pattern fails, or file unchanged.
+The script keeps two runs that are not part of the mutant tally:
+
+- a comment-only edit of the YAML guard, on a valid config, must score
+  SURVIVED. A passing `go test` without `-v` prints `ok`, not `PASS`.
+- a config goreleaser cannot archive must score ERROR, not KILLED.
+
+If either proof scores as something else, the command fails.
