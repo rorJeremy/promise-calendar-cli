@@ -1,6 +1,8 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..15c9da1 100644
 --- a/internal/release/artifacts_test.go
 +++ b/internal/release/artifacts_test.go
-@@ -163,7 +163,7 @@ func TestSnapshotArtifacts(t *testing.T) {
+@@ -167,7 +167,7 @@ func TestSnapshotArtifacts(t *testing.T) {
  
  			for _, file := range files {
  				name := filepath.Base(file)

@@ -1,8 +1,16 @@
 diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
-index a4fa841..782110f 100644
+index 7179e58..b6b35f4 100644
 --- a/internal/release/artifacts_test.go
 +++ b/internal/release/artifacts_test.go
-@@ -169,12 +169,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+@@ -163,7 +163,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 			// Check required files
+ 			hasLicense := false
+ 			hasReadme := false
+-			hasCompletions := false
+ 
+ 			for _, file := range files {
+ 				name := filepath.Base(file)
+@@ -173,12 +172,6 @@ func TestSnapshotArtifacts(t *testing.T) {
  				if name == "README.md" {
  					hasReadme = true
  				}
@@ -15,3 +23,13 @@ index a4fa841..782110f 100644
  			}
  
  			if !hasLicense {
+@@ -187,9 +180,6 @@ func TestSnapshotArtifacts(t *testing.T) {
+ 			if !hasReadme {
+ 				t.Errorf("missing required file: README.md. Files: %v", files)
+ 			}
+-			if !hasCompletions {
+-				t.Errorf("no completion files (pcal.bash/zsh/fish) found in archive. Files: %v", files)
+-			}
+ 		})
+ 	}
+ }

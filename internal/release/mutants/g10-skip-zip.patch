@@ -1,6 +1,8 @@
+diff --git a/internal/release/artifacts_test.go b/internal/release/artifacts_test.go
+index 7179e58..21ddb21 100644
 --- a/internal/release/artifacts_test.go
 +++ b/internal/release/artifacts_test.go
-@@ -126,7 +126,7 @@ func TestSnapshotArtifacts(t *testing.T) {
+@@ -127,7 +127,7 @@ func TestSnapshotArtifacts(t *testing.T) {
  
  	// Find all archives (goreleaser creates one per platform)
  	archives := []string{}

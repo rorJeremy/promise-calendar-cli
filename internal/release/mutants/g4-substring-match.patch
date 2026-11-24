@@ -1,15 +1,15 @@
 diff --git a/internal/release/goreleaser_test.go b/internal/release/goreleaser_test.go
-index 6069039..68e00ab 100644
+index 6069039..f550fca 100644
 --- a/internal/release/goreleaser_test.go
 +++ b/internal/release/goreleaser_test.go
-@@ -3,6 +3,7 @@ package release_test
+@@ -2,6 +2,7 @@ package release_test
+ 
  import (
  	"os"
- 	"testing"
 +	"strings"
+ 	"testing"
  
  	"gopkg.in/yaml.v3"
- )
 @@ -40,7 +41,7 @@ func TestGoReleaserConfig(t *testing.T) {
  		for _, requiredFile := range required {
  			found := false

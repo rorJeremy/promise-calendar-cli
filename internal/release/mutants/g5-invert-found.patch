@@ -1,0 +1,13 @@
+diff --git a/internal/release/goreleaser_test.go b/internal/release/goreleaser_test.go
+index 6069039..fc9b815 100644
+--- a/internal/release/goreleaser_test.go
++++ b/internal/release/goreleaser_test.go
+@@ -45,7 +45,7 @@ func TestGoReleaserConfig(t *testing.T) {
+ 					break
+ 				}
+ 			}
+-			if !found {
++			if found {
+ 				t.Errorf("archives[%d]: %q missing from files. Found: %v", i, requiredFile, archiveFiles)
+ 			}
+ 		}
