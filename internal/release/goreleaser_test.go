@@ -32,11 +32,11 @@ func TestGoReleaserConfig(t *testing.T) {
 	// Check EVERY archive entry (not just archives[0])
 	for i, archive := range config.Archives {
 		archiveFiles := archive.Files
-		
+
 		// Required files: exact matches only (not substring or fuzzy)
 		// This prevents LICENSE.bak, MY_README, etc. from passing
 		required := []string{"LICENSE", "README*", "completions/*"}
-		
+
 		for _, requiredFile := range required {
 			found := false
 			for _, file := range archiveFiles {
