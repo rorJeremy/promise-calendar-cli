@@ -13,6 +13,19 @@ import (
 	"testing"
 )
 
+// captureGitStatus returns "git status --porcelain" output for repo state checking
+func captureGitStatus(t *testing.T, repoRoot string) string {
+	t.Helper()
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("git status failed (non-git repo?): %v", err)
+		return ""
+	}
+	return string(output)
+}
+
 // TestSnapshotArtifacts validates that goreleaser snapshot builds actually
 // include LICENSE, README.md, and completions in the archives.
 // This complements TestGoReleaserConfig by checking real artifacts, not just YAML.
@@ -20,7 +33,8 @@ import (
 // Run with: TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
 // or: make test-snapshot
 //
-// Skip in normal `make check` to keep it fast (snapshot build takes ~3s).
+// NOT part of `make check` (kept separate to keep CI fast - snapshot build takes ~3s).
+// Explicitly run via `make test-snapshot` or in release.yml before publishing.
 // Builds into a temp directory and leaves the repo's dist/ untouched.
 func TestSnapshotArtifacts(t *testing.T) {
 	if testing.Short() {
@@ -43,6 +57,17 @@ func TestSnapshotArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get absolute path to repo root: %v", err)
 	}
+
+	// Guard: Capture repo tree state before build (hooks may modify files)
+	// goreleaser before.hooks includes "go mod tidy" which can modify go.mod/go.sum
+	gitStatusBefore := captureGitStatus(t, repoRoot)
+	defer func() {
+		gitStatusAfter := captureGitStatus(t, repoRoot)
+		if gitStatusBefore != gitStatusAfter {
+			t.Errorf("repo tree modified by build:\nBefore:\n%s\nAfter:\n%s",
+				gitStatusBefore, gitStatusAfter)
+		}
+	}()
 
 	// Build into a temp directory (don't touch repo's dist/)
 	tempDist := t.TempDir()
@@ -93,30 +118,29 @@ func TestSnapshotArtifacts(t *testing.T) {
 	}
 
 	// Check archives in temp dist (not repo dist/)
-	distDir := tempDist
-	entries, err := os.ReadDir(distDir)
-	if err != nil {
-		t.Fatalf("failed to read dist directory: %v", err)
-	}
+	archivePattern := filepath.Join(tempDist, "*.{tar.gz,zip}")
+	t.Logf("Looking for archives matching: %s", archivePattern)
 
-	// Find all archives (.tar.gz and .zip)
+	// Find all archives (goreleaser creates one per platform)
 	archives := []string{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip") {
-			archives = append(archives, filepath.Join(distDir, name))
+	for _, ext := range []string{".tar.gz", ".zip"} {
+		matches, err := filepath.Glob(filepath.Join(tempDist, "*"+ext))
+		if err != nil {
+			t.Fatalf("failed to glob archives: %v", err)
 		}
+		archives = append(archives, matches...)
 	}
 
 	if len(archives) == 0 {
-		t.Fatal("no archives found in dist/")
+		t.Fatal("no archives found in temp dist")
 	}
 
 	t.Logf("Found %d archives to check", len(archives))
 
 	// Check each archive
 	for _, archivePath := range archives {
-		t.Run(filepath.Base(archivePath), func(t *testing.T) {
+		archiveName := filepath.Base(archivePath)
+		t.Run(archiveName, func(t *testing.T) {
 			var files []string
 			var err error
 
@@ -132,43 +156,41 @@ func TestSnapshotArtifacts(t *testing.T) {
 				t.Fatalf("failed to list archive: %v", err)
 			}
 
-			// Required files in every archive
-			required := map[string]bool{
-				"LICENSE":   false,
-				"README.md": false,
-			}
-			// At least one completion file
-			hasCompletion := false
+			// Check required files
+			hasLicense := false
+			hasReadme := false
+			hasCompletions := false
 
 			for _, file := range files {
-				base := filepath.Base(file)
-				if base == "LICENSE" {
-					required["LICENSE"] = true
+				name := filepath.Base(file)
+				if name == "LICENSE" {
+					hasLicense = true
 				}
-				if base == "README.md" {
-					required["README.md"] = true
+				if name == "README.md" {
+					hasReadme = true
 				}
-				if strings.HasPrefix(base, "pcal.") && (strings.HasSuffix(base, ".bash") ||
-					strings.HasSuffix(base, ".zsh") || strings.HasSuffix(base, ".fish")) {
-					hasCompletion = true
-				}
-			}
-
-			// Check required files
-			for file, found := range required {
-				if !found {
-					t.Errorf("%s missing from archive. Files: %v", file, files)
+				if strings.HasPrefix(name, "pcal.") &&
+					(strings.HasSuffix(name, ".bash") ||
+						strings.HasSuffix(name, ".zsh") ||
+						strings.HasSuffix(name, ".fish")) {
+					hasCompletions = true
 				}
 			}
 
-			// Check completions
-			if !hasCompletion {
+			if !hasLicense {
+				t.Errorf("missing required file: LICENSE. Files: %v", files)
+			}
+			if !hasReadme {
+				t.Errorf("missing required file: README.md. Files: %v", files)
+			}
+			if !hasCompletions {
 				t.Errorf("no completion files (pcal.bash/zsh/fish) found in archive. Files: %v", files)
 			}
 		})
 	}
 }
 
+// listTarGz returns all file paths in a tar.gz archive
 func listTarGz(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -184,7 +206,6 @@ func listTarGz(path string) ([]string, error) {
 
 	tr := tar.NewReader(gzr)
 	var files []string
-
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -197,10 +218,10 @@ func listTarGz(path string) ([]string, error) {
 			files = append(files, header.Name)
 		}
 	}
-
 	return files, nil
 }
 
+// listZip returns all file paths in a zip archive
 func listZip(path string) ([]string, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
@@ -214,6 +235,5 @@ func listZip(path string) ([]string, error) {
 			files = append(files, f.Name)
 		}
 	}
-
 	return files, nil
 }

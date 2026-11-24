@@ -46,8 +46,9 @@ check: fmt-check vet lint tidy-check test
 test-snapshot:
 	TEST_SNAPSHOT=1 go test -v ./internal/release -run TestSnapshotArtifacts
 
-## test-mutations: comprehensive mutation testing (~8s)
-## Tests: 10 config + 3 artifact + 7 guard-code = 20 mutants total
+## test-mutations: comprehensive mutation testing (~10s, isolated worktree)
+## Tests: 10 config + 3 artifact + 12 guard-code = 25 mutants total
+## Runs in git worktree (never modifies working tree, even on Ctrl-C)
 ## Not part of 'make check' - run explicitly to validate guard effectiveness.
 test-mutations:
 	@bash internal/release/test_all_mutations.sh
